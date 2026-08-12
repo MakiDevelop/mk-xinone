@@ -1,0 +1,17 @@
+{
+  "schema": "mk-xinone.seat.v1",
+  "id": "engineer",
+  "role": "Engineer",
+  "status": "done",
+  "one_line_verdict": "v0 先鎖 session 契約 + mock orchestrator + CLI show/run，再接模型。",
+  "key_points": [
+    "schemas + demo 可測、可重播",
+    "preset YAML 讓 council-lite / dual-review 可擴",
+    "harness 先做語意（wall、require_verdict），再接 mk-agentos kit"
+  ],
+  "risks": [
+    "過早做 Web UI 分散契約穩定度",
+    "與 agentX 深耦合會拖住 release"
+  ],
+  "confidence": 5
+}

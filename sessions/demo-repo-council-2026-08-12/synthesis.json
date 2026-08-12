@@ -1,0 +1,22 @@
+{
+  "schema": "mk-xinone.synthesis.v1",
+  "consensus": [
+    "應有獨立產品 repo 當對話式 X 位一體入口",
+    "本地 session 資料夾是交接與 demo 的 SSOT",
+    "v0 以契約 + mock + CLI 為主，不先做 agent farm"
+  ],
+  "disagreements": [
+    {
+      "topic": "何時接真多模型",
+      "a": "analyst",
+      "b": "engineer",
+      "summary": "Analyst 擔心 mock 過久傷信任；Engineer 主張契約先穩再接模型。折衷：公開 demo 用真實感文案，run 預設 mock 並標明，下一步接 1–2 backend。"
+    }
+  ],
+  "blind_spots": [
+    "授權與對外 GitHub visibility 需 Chair 另裁",
+    "公司 preset 不可進 public demo"
+  ],
+  "verdict_label": "SHIP_SCAFFOLD",
+  "confidence": 4
+}

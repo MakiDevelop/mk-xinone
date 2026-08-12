@@ -1,0 +1,19 @@
+# Default 3-seat council — strangers / 5-minute path
+id: council-lite
+name: Council Lite
+description: Architect + Analyst + Engineer，再綜合。預設入口。
+seats:
+  - id: architect
+    role: Architect
+    mission: 目標是否對、邊界、風險、是否該做
+  - id: analyst
+    role: Analyst
+    mission: 結構、一致性、可驗證事實、缺口
+  - id: engineer
+    role: Engineer
+    mission: 可不可做、怎麼驗、實作風險
+synthesis: true
+harness:
+  wall_max_retries: 2
+  require_verdict: true
+  no_self_accept: false

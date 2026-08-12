@@ -1,0 +1,17 @@
+# Executor + independent Reviewer — no self-accept
+id: dual-review
+name: Dual Review
+description: 一人做、一人審；Reviewer 未 PASS 不得宣稱完成。
+seats:
+  - id: executor
+    role: Executor
+    mission: 完成任務並留下可檢查證據
+  - id: reviewer
+    role: Reviewer
+    mission: 獨立審查；輸出 VERDICT PASS|FAIL|PASS_WITH_NITS + evidence
+synthesis: true
+harness:
+  wall_max_retries: 2
+  require_verdict: true
+  no_self_accept: true
+  accept_requires: reviewer

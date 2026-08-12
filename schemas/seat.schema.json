@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mk-xinone.local/schemas/seat.schema.json",
+  "title": "mk-xinone.seat.v1",
+  "type": "object",
+  "required": ["schema", "id", "role", "status", "one_line_verdict"],
+  "properties": {
+    "schema": { "const": "mk-xinone.seat.v1" },
+    "id": { "type": "string" },
+    "role": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "done", "failed", "blocked"]
+    },
+    "one_line_verdict": { "type": "string" },
+    "key_points": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "confidence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    }
+  }
+}

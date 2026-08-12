@@ -1,0 +1,15 @@
+{
+  "schema": "mk-xinone.graph.v1",
+  "nodes": [
+    {"id": "architect", "label": "Architect"},
+    {"id": "analyst", "label": "Analyst"},
+    {"id": "engineer", "label": "Engineer"}
+  ],
+  "edges": [
+    {
+      "source": "analyst",
+      "target": "engineer",
+      "label": "何時接真多模型"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mk-xinone.local/schemas/meta.schema.json",
+  "title": "mk-xinone.session.meta.v1",
+  "type": "object",
+  "required": ["schema", "id", "preset", "status", "created_at", "seats"],
+  "properties": {
+    "schema": { "const": "mk-xinone.session.meta.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "preset": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["running", "completed", "blocked", "failed"]
+    },
+    "created_at": { "type": "string" },
+    "input_summary": { "type": "string" },
+    "seats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "role", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "role": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "done", "failed", "blocked"]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "mk-xinone.seat.v1",
+  "id": "analyst",
+  "role": "Analyst",
+  "status": "done",
+  "one_line_verdict": "需求真實；成功取決於「5 分鐘劇本」與護欄預設開，不是席位數量。",
+  "key_points": [
+    "陌生人路徑：demo session 離線可逛",
+    "同事路徑：zip 整個 sessions/<id>",
+    "可視化四面板應是展開層，預設只露對話+進度+結論"
+  ],
+  "risks": [
+    "文件過重會複製 mk-agentos 的上路摩擦",
+    "mock 席位若長期不接真模型，信任會掉"
+  ],
+  "confidence": 4
+}

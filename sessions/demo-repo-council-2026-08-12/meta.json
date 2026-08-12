@@ -1,0 +1,13 @@
+{
+  "schema": "mk-xinone.session.meta.v1",
+  "id": "demo-repo-council-2026-08-12",
+  "preset": "council-lite",
+  "status": "completed",
+  "created_at": "2026-08-12T12:00:00+08:00",
+  "input_summary": "評估是否開源對話式 X 位一體產品 mk-xinone",
+  "seats": [
+    {"id": "architect", "role": "Architect", "status": "done"},
+    {"id": "analyst", "role": "Analyst", "status": "done"},
+    {"id": "engineer", "role": "Engineer", "status": "done"}
+  ]
+}

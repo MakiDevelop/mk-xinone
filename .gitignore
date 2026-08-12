@@ -1,0 +1,26 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.DS_Store
+*.swp
+
+# Local runs (keep demo/ in git)
+sessions/*
+!sessions/demo-*/
+!sessions/demo-*/**
+!sessions/README.md
+
+# Secrets
+.env
+.env.*
+.secrets/

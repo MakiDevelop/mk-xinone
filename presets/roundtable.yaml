@@ -1,0 +1,22 @@
+# Four-perspective roundtable (generic frameworks, not Maki-private)
+id: roundtable
+name: Roundtable
+description: 四席獨立分析後綜合共識／分歧／盲點。
+seats:
+  - id: strategy
+    role: Strategy
+    mission: 策略核心是否清楚、優先序是否合理
+  - id: systems
+    role: Systems
+    mission: 系統槓桿、回饋迴路、隱性假設
+  - id: risk
+    role: Risk
+    mission: 尾部風險、失敗模式、可逆性
+  - id: delivery
+    role: Delivery
+    mission: 執行節奏、驗證、誰負責
+synthesis: true
+harness:
+  wall_max_retries: 2
+  require_verdict: true
+  no_self_accept: false

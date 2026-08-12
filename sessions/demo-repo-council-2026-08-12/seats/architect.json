@@ -1,0 +1,17 @@
+{
+  "schema": "mk-xinone.seat.v1",
+  "id": "architect",
+  "role": "Architect",
+  "status": "done",
+  "one_line_verdict": "值得做獨立產品臉，但引擎應薄、依賴既有 harness／runtime。",
+  "key_points": [
+    "使用者入口必須是對話／一句指令，不是 CLI 宇宙",
+    "與 agentX（本地殼）、mk-agentos（契約）分工清楚才不會定位崩",
+    "本地 session 當 SSOT 利於同事交接與離線 demo"
+  ],
+  "risks": [
+    "做成第二個 agent 終端會與 Herdr 硬撞且偏離目標",
+    "一開始就接七供應商會拖垮 MVP"
+  ],
+  "confidence": 4
+}
