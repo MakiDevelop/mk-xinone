@@ -45,8 +45,9 @@ xinone run "用多角度評估 https://github.com/example/hello" --preset counci
 # 真跑（需 API 或本機 Ollama）
 # xinone run "..." --preset council-lite --backend ollama --model qwen3:8b
 
-# 對話 REPL
-# xinone chat --backend ollama
+# 對話 REPL（預設只跟主席聊；其它席安靜）
+# xinone chat --backend mock
+# 開會：/council <目標>
 ```
 
 成功標準（產品目標；M1 後對 real run 驗收）：

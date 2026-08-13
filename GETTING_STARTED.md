@@ -53,7 +53,9 @@ xinone run "評估本地 session SSOT" --preset council-lite --backend ollama --
 | `xinone run "..." [--backend mock\|openai\|ollama]` | 開一輪 council |
 | `xinone show <session_dir>\|demo` | 讀本地 session（`--verbose` 全文） |
 | `xinone doctor [--probe]` | 檢查目錄／demo／API env |
-| `xinone chat [--backend …]` | 對話式 REPL：輸入目標即 run |
+| `xinone chat [--backend …]` | 跟**主席**對話；其它席預設不發言 |
+| `xinone chat` 內 `/council <目標>` | 強制多席開會 |
+| `xinone run "…"` | 直接多席（略過主席閘門） |
 
 ## 給同事
 

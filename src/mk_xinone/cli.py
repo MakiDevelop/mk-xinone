@@ -1,4 +1,4 @@
-"""xinone CLI — list presets, run council, show sessions, doctor."""
+"""xinone CLI — list presets, run council, chair chat, show sessions, doctor."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 
 from mk_xinone import __version__
 from mk_xinone.backends.openai_compatible import resolve_openai_settings
+from mk_xinone.chair import ChatState, ChatTurn, decide_chair
 from mk_xinone.orchestrator import run_council
 from mk_xinone.paths import presets_dir, repo_root, sessions_dir
 from mk_xinone.presets import load_preset, summarize_presets
@@ -53,45 +54,6 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_run(args: argparse.Namespace) -> int:
-    try:
-        preset = load_preset(args.preset)
-    except (FileNotFoundError, ValueError) as e:
-        print(str(e), file=sys.stderr)
-        return 1
-
-    out = Path(args.out) if args.out else None
-    if out is not None and not out.is_absolute():
-        out = Path.cwd() / out
-
-    def progress(msg: str) -> None:
-        print(f"… {msg}", flush=True)
-
-    try:
-        session_dir = run_council(
-            goal=args.goal,
-            preset=preset,
-            backend=args.backend,
-            out_dir=out,
-            sessions_root=sessions_dir(),
-            force=args.force,
-            on_progress=progress,
-            base_url=args.base_url,
-            api_key=args.api_key,
-            model=args.model,
-        )
-    except FileExistsError as e:
-        print(str(e), file=sys.stderr)
-        return 2
-    except (OSError, ValueError, RuntimeError) as e:
-        print(f"run failed: {e}", file=sys.stderr)
-        return 1
-
-    print()
-    print(f"preset:  {preset.get('id')}")
-    return _print_run_result(session_dir, verbose=args.verbose)
-
-
 def _print_run_result(session_dir: Path, *, verbose: bool) -> int:
     try:
         bundle = read_session(session_dir)
@@ -116,21 +78,82 @@ def _print_run_result(session_dir: Path, *, verbose: bool) -> int:
     return 1
 
 
+def _backend_kwargs(
+    backend: str,
+    args: argparse.Namespace,
+) -> tuple[str, str | None, str | None, str | None]:
+    """Return run_backend, base_url, api_key, model."""
+    base_url, api_key, model = args.base_url, args.api_key, args.model
+    run_backend = backend
+    if backend == "ollama":
+        run_backend = "openai"
+        if not base_url and not os.environ.get("XINONE_BASE_URL"):
+            base_url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434") + "/v1"
+        if not model and not os.environ.get("XINONE_MODEL"):
+            model = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+        if api_key is None and not os.environ.get("XINONE_API_KEY"):
+            api_key = os.environ.get("OPENAI_API_KEY", "ollama")
+    return run_backend, base_url, api_key, model
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    try:
+        preset = load_preset(args.preset)
+    except (FileNotFoundError, ValueError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    out = Path(args.out) if args.out else None
+    if out is not None and not out.is_absolute():
+        out = Path.cwd() / out
+
+    def progress(msg: str) -> None:
+        print(f"… {msg}", flush=True)
+
+    run_backend, base_url, api_key, model = _backend_kwargs(args.backend, args)
+
+    try:
+        session_dir = run_council(
+            goal=args.goal,
+            preset=preset,
+            backend=run_backend,
+            out_dir=out,
+            sessions_root=sessions_dir(),
+            force=args.force,
+            on_progress=progress,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+        )
+    except FileExistsError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f"run failed: {e}", file=sys.stderr)
+        return 1
+
+    print()
+    print(f"preset:  {preset.get('id')}")
+    return _print_run_result(session_dir, verbose=args.verbose)
+
+
 def cmd_chat(args: argparse.Namespace) -> int:
-    """Thin REPL: one goal → council → show; loop until quit."""
-    print("mk-xinone chat — 輸入目標開一輪 council；/quit 離開")
+    """Chair-first REPL: only Chair speaks unless a council is convened."""
+    print("mk-xinone chat — 你跟「主席」對話；其它席次預設安靜")
     print(f"preset={args.preset}  backend={args.backend}")
-    print("指令: /preset <id>  /backend mock|openai|ollama  /verbose  /quit")
+    print("指令: /council <目標>  強制開會")
+    print("      /preset <id>  /backend mock|openai|ollama  /verbose  /quit")
     print()
 
     preset_id = args.preset
     backend = args.backend
     verbose = args.verbose
     last_code = 0
+    state = ChatState()
 
     while True:
         try:
-            line = input("xinone> ").strip()
+            line = input("you> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -159,10 +182,51 @@ def cmd_chat(args: argparse.Namespace) -> int:
             print(f"verbose → {verbose}")
             continue
         if line in {"/help", "help", "?"}:
-            print("輸入任意目標文字即 run；/preset /backend /verbose /quit")
+            print("預設只跟主席聊。其它席次不會發言。")
+            print("/council <目標> 才開會；/preset /backend /verbose /quit")
             continue
 
-        # treat line as goal
+        force_convene = False
+        user_text = line
+        if line.startswith("/council"):
+            force_convene = True
+            parts = line.split(maxsplit=1)
+            user_text = parts[1].strip() if len(parts) == 2 else ""
+            if not user_text:
+                print("用法: /council <要審議的目標>")
+                continue
+
+        run_backend, base_url, api_key, model = _backend_kwargs(backend, args)
+        # decide_chair: mock uses "mock"; openai path needs openai
+        chair_backend = "mock" if backend == "mock" else "openai"
+
+        decision = decide_chair(
+            user_text,
+            state,
+            backend=chair_backend,
+            force_convene=force_convene,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+        )
+
+        state.history.append(ChatTurn(role="user", content=user_text))
+        state.turns += 1
+
+        # Always show chair message first
+        print()
+        print(f"主席> {decision.message}")
+        if verbose and decision.reason:
+            print(f"      (reason: {decision.reason})")
+        print()
+        state.history.append(ChatTurn(role="chair", content=decision.message))
+
+        if decision.action != "convene":
+            # Other seats stay silent
+            last_code = 0
+            continue
+
+        # Convene multi-seat — only now other seats speak
         try:
             preset = load_preset(preset_id)
         except (FileNotFoundError, ValueError) as e:
@@ -170,24 +234,15 @@ def cmd_chat(args: argparse.Namespace) -> int:
             last_code = 1
             continue
 
-        # apply ollama defaults like main()
-        base_url, api_key, model = args.base_url, args.api_key, args.model
-        run_backend = backend
-        if backend == "ollama":
-            run_backend = "openai"
-            if not base_url and not os.environ.get("XINONE_BASE_URL"):
-                base_url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434") + "/v1"
-            if not model and not os.environ.get("XINONE_MODEL"):
-                model = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
-            if api_key is None and not os.environ.get("XINONE_API_KEY"):
-                api_key = os.environ.get("OPENAI_API_KEY", "ollama")
+        goal = (decision.goal or user_text).strip()
+        print(f"（開會中… preset={preset_id} backend={backend}）")
 
         def progress(msg: str) -> None:
             print(f"… {msg}", flush=True)
 
         try:
             session_dir = run_council(
-                goal=line,
+                goal=goal,
                 preset=preset,
                 backend=run_backend,
                 sessions_root=sessions_dir(),
@@ -197,11 +252,13 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 model=model,
             )
         except (OSError, ValueError, RuntimeError, FileExistsError) as e:
-            print(f"run failed: {e}", file=sys.stderr)
+            print(f"council failed: {e}", file=sys.stderr)
             last_code = 1
             continue
 
         last_code = _print_run_result(session_dir, verbose=verbose)
+        print()
+        print("主席> 會開完了。其它席次再次安靜；有需要再叫我開會。")
         print()
 
     return last_code
@@ -225,7 +282,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     checks.append(
         (
             "API key (XINONE_API_KEY/OPENAI_API_KEY)",
-            True,  # informational; missing key is ok for mock
+            True,
             "set" if key_set else "missing (ok for mock / local ollama)",
         )
     )
@@ -259,14 +316,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ok = False
 
     print(f"version: {__version__}")
-    print("tip: mock run needs no key; real run: --backend openai + env")
+    print("tip: chat = 主席陪聊；/council 或明確審議題才開會")
     return 0 if ok else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="xinone",
-        description="mk-xinone — chat to run a council; sessions stay on disk",
+        description="mk-xinone — chair chat + on-demand multi-seat council",
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
@@ -279,7 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--verbose", "-v", action="store_true", help="Full verdict.md")
     sp.set_defaults(func=cmd_show)
 
-    sp = sub.add_parser("run", help="Run a council (mock or openai backend)")
+    sp = sub.add_parser("run", help="Run a full multi-seat council (no chair gate)")
     sp.add_argument("goal", help="User goal / prompt")
     sp.add_argument("--preset", default="council-lite", help="Preset id")
     sp.add_argument(
@@ -300,7 +357,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--verbose", "-v", action="store_true")
     sp.set_defaults(func=cmd_run)
 
-    sp = sub.add_parser("chat", help="Thin REPL: type a goal, run council, loop")
+    sp = sub.add_parser(
+        "chat",
+        help="Talk to Chair; other seats silent until council is convened",
+    )
     sp.add_argument("--preset", default="council-lite")
     sp.add_argument(
         "--backend",
@@ -327,15 +387,14 @@ def build_parser() -> argparse.ArgumentParser:
 def _apply_ollama_defaults(args: argparse.Namespace) -> None:
     if getattr(args, "backend", None) != "ollama":
         return
-    # keep backend label for chat display; run path maps inside handlers
     if getattr(args, "func", None) is cmd_chat:
         return
     args.backend = "openai"
-    if not args.base_url and not os.environ.get("XINONE_BASE_URL"):
+    if not getattr(args, "base_url", None) and not os.environ.get("XINONE_BASE_URL"):
         args.base_url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434") + "/v1"
-    if not args.model and not os.environ.get("XINONE_MODEL"):
+    if not getattr(args, "model", None) and not os.environ.get("XINONE_MODEL"):
         args.model = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
-    if args.api_key is None and not os.environ.get("XINONE_API_KEY"):
+    if getattr(args, "api_key", None) is None and not os.environ.get("XINONE_API_KEY"):
         args.api_key = os.environ.get("OPENAI_API_KEY", "ollama")
 
 
