@@ -20,28 +20,39 @@ xinone show sessions/demo-repo-council-2026-08-12
 xinone list-presets
 ```
 
-## 跑一輪
+## 跑一輪（mock — 不需 key）
 
 ```bash
 xinone run "用多角度評估這個想法：本地 session 當 SSOT" --preset council-lite
 ```
 
-產出目錄預設：`sessions/<timestamp>-<slug>/`
+產出目錄預設：`sessions/<date>-<slug>/`（碰撞自動加 `-2`）。  
+非空 `--out` 預設拒絕覆寫；需要時加 `--force`。
 
-指定輸出：
+## 真 backend（OpenAI-compatible / Ollama）
 
 ```bash
-xinone run "..." --preset dual-review --out sessions/my-run
+# 雲端或任意兼容端點
+export XINONE_BASE_URL="https://api.openai.com/v1"   # 或自架
+export XINONE_API_KEY="sk-..."
+export XINONE_MODEL="gpt-4o-mini"
+xinone run "評估本地 session SSOT" --preset council-lite --backend openai
+
+# 本機 Ollama（OpenAI 兼容埠）
+xinone run "評估本地 session SSOT" --preset council-lite --backend ollama --model qwen3:8b
+# 等同 base_url=http://127.0.0.1:11434/v1
 ```
+
+`xinone doctor --probe` 可探測 `/models` 是否可達。
 
 ## 常用指令
 
 | 指令 | 用途 |
 |------|------|
 | `xinone list-presets` | 列出內建 preset |
-| `xinone run "..."` | 開一輪 council（v0 mock 席位） |
-| `xinone show <session_dir>` | 讀本地 session，印進度與判決 |
-| `xinone doctor` | 檢查 Python／目錄／demo 是否完整 |
+| `xinone run "..." [--backend mock\|openai\|ollama]` | 開一輪 council |
+| `xinone show <session_dir>\|demo` | 讀本地 session（`--verbose` 全文） |
+| `xinone doctor [--probe]` | 檢查目錄／demo／API env |
 
 ## 給同事
 

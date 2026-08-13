@@ -26,31 +26,31 @@ OpenAI-compatible 真 backend → `council-lite` 真跑 → 席位進度可見 �
 | # | 項目 | 完成定義 | 狀態 |
 |---|------|----------|------|
 | 1 | 驗收表 `docs/m1-acceptance.md` | 四～五情境 + 預期 status/exit | **done** |
-| 2 | Session lifecycle 修補 | 不覆寫；running→終態；原子寫入；secrets 不落盤；測試綠 | pending |
-| 3 | OpenAI-compatible SeatRunner | 真/假 server 測；seat.v1；可指 Ollama | pending |
-| 4 | `council-lite` 真跑 | `xinone run` 非 mock 判決；meta 標 real | pending |
-| 5 | Harness 硬閘 | Done-gate + no_self_accept 單測全過；未過不得 `completed` | pending |
-| 6 | CLI 進度 + 濃縮輸出 | 預設進度+結論；`--verbose` 展開；mock 浮水印 | pending |
-| 7 | 顯性 synthesizer + doctor 升級 | preset 宣告 synthesizer；doctor 查 API/key 白話 | pending |
+| 2 | Session lifecycle 修補 | 不覆寫；running→終態；原子寫入；secrets 不落盤；測試綠 | **done** |
+| 3 | OpenAI-compatible SeatRunner | 真/假 transport 測；seat.v1；可指 Ollama | **done** |
+| 4 | `council-lite` 真跑 | `--backend openai\|ollama`；`mode=real`；本機 Ollama 實測通過 | **done** |
+| 5 | Harness 硬閘 | Done-gate + no_self_accept；未過不得 `completed` | **done** |
+| 6 | CLI 進度 + 濃縮輸出 | 進度行；mock 浮水印；`--verbose` | **done** |
+| 7 | 顯性 synthesizer + doctor | preset 宣告；doctor + `--probe` | **done** |
 
-### 可選（不進 2 週必達）
+### 可選 follow-up（非阻塞）
 
 - `xinone chat` 薄 REPL  
 - 5 人陌生人實測記錄  
+- wall 2× retry 迴圈（目前 gate 有、自動重試未做）  
+- dual-review 真模型 E2E 錄影  
 
 ---
 
-## M0（已完成）
+## M0 + M1 vertical slice（已完成）
 
-- [x] repo 骨架、Apache-2.0  
+- [x] repo 骨架、Apache-2.0、private GitHub  
 - [x] session 契約 + demo  
-- [x] presets + `xinone` CLI mock  
-- [x] Council 發想 + Maki ratify A1–A7  
-- [x] README 誠實標示 harness 狀態（A5）  
+- [x] Council A1–A7 ratify  
+- [x] Guarded vertical slice 程式 + 測試 + Ollama 實跑  
 
 ---
 
 ## 歷史草案（作廢為施工順序）
 
-舊 M1/M2/M3 三段鬆散 milestone **已由 vertical slice 取代**（Codex 異議 A1 採納）。  
-細節只保留在 git 歷史，勿再當施工順序。
+舊 M1/M2/M3 三段鬆散 milestone **已由 vertical slice 取代**。

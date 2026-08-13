@@ -16,9 +16,10 @@
 | 能力 | 狀態 |
 |------|------|
 | 離線 demo session | **yes** |
-| `xinone run` mock 席位 | **yes**（輸出會標 mock） |
-| OpenAI-compatible 真 backend | **M1 in progress** |
-| Done-gate / no_self_accept 硬擋 | **planned → M1** |
+| `xinone run` mock 席位 | **yes**（浮水印） |
+| OpenAI-compatible / Ollama 真 backend | **yes**（`--backend openai\|ollama`） |
+| Done-gate / no_self_accept 硬擋 | **yes**（未過不得 `completed`） |
+| Session 不覆寫 / 原子寫 / redact | **yes** |
 | Web UI | **不做**（v1 = CLI only） |
 
 施工單：[`docs/NEXT.md`](docs/NEXT.md) · 驗收：[`docs/m1-acceptance.md`](docs/m1-acceptance.md)
@@ -36,8 +37,11 @@ pip install -e .
 # 離線看 demo（不需 API key）— 推薦第一站
 xinone show sessions/demo-repo-council-2026-08-12
 
-# 跑一輪（目前預設 mock；接上 API 後為 real）
+# mock（預設）
 xinone run "用多角度評估 https://github.com/example/hello" --preset council-lite
+
+# 真跑（需 API 或本機 Ollama）
+# xinone run "..." --preset council-lite --backend ollama --model qwen3:8b
 ```
 
 成功標準（產品目標；M1 後對 real run 驗收）：

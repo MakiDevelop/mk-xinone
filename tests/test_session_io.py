@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from mk_xinone.paths import repo_root
 from mk_xinone.session_io import format_session_show, read_session, slugify
 
