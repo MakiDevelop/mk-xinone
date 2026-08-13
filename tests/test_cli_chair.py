@@ -20,10 +20,26 @@ def test_recipes_cover_four_clis():
 
 
 def test_claude_command_does_not_use_bare():
-    argv = build_cli_chair_command("claude", "hello")
+    argv = build_cli_chair_command("claude", "hello", session_id="11111111-1111-1111-1111-111111111111")
     assert "--bare" not in argv
+    assert "--no-session-persistence" not in argv
+    assert "--safe-mode" in argv
+    assert "--effort" in argv
+    assert "--session-id" in argv
     assert "-p" in argv
     assert "--permission-mode" in argv
+
+
+def test_claude_continue_uses_resume():
+    sid = "11111111-1111-1111-1111-111111111111"
+    first = build_cli_chair_command("claude", "hi", session_id=sid)
+    again = build_cli_chair_command(
+        "claude", "再問一次", continue_session=True, session_id=sid
+    )
+    assert "--session-id" in first
+    assert "--resume" in again
+    assert sid in again
+    assert "--no-session-persistence" not in again
 
 
 def test_parse_claude_auth_logged_in():
@@ -64,8 +80,13 @@ def test_codex_command_is_read_only_exec():
     argv = build_cli_chair_command("codex", "hello", last_message_path="/tmp/out.txt")
     assert argv[:2] == ["codex", "exec"]
     assert "-s" in argv and "read-only" in argv
-    assert "--ephemeral" in argv
+    assert "--ephemeral" not in argv
     assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+    cont = build_cli_chair_command(
+        "codex", "next", continue_session=True, last_message_path="/tmp/out.txt"
+    )
+    assert cont[:3] == ["codex", "exec", "resume"]
+    assert "--last" in cont
 
 
 def test_run_cli_chair_uses_injected_runner():
@@ -101,3 +122,29 @@ def test_reply_as_chair_cli_does_not_convene():
     d = reply_as_chair(agent, "嗨", ChatState(), cli_runner=fake)
     assert d.action == "reply"
     assert "尚未開會" in d.message
+
+
+def test_reply_as_chair_second_turn_resumes():
+    agent = AgentInfo(
+        id="cli:claude",
+        kind="cli",
+        label="Claude Code CLI",
+        available=True,
+        runnable=False,
+        aliases=["claude"],
+        chair_capable=True,
+    )
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], timeout: float) -> tuple[int, str, str]:
+        seen.append(argv)
+        return 0, f"ok-{len(seen)}", ""
+
+    state = ChatState()
+    first = reply_as_chair(agent, "Hi", state, cli_runner=fake)
+    second = reply_as_chair(agent, "還在嗎", state, cli_runner=fake)
+    assert first.action == second.action == "reply"
+    assert "--session-id" in seen[0]
+    assert "--resume" in seen[1]
+    assert "--no-session-persistence" not in seen[0]
+    assert "還在嗎" in seen[1][-1]

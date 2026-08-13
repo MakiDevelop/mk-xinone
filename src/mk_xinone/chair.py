@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from mk_xinone.agents import AgentInfo, ResolveResult, resolve_agent_ref
 from mk_xinone.backends import get_runner
 from mk_xinone.backends.cli_chair import (
+    bind_cli_workspace,
     build_chair_prompt,
     cli_cmd_from_agent_id,
     run_cli_chair,
@@ -126,6 +127,9 @@ class ChatState:
     convene_mode: str = "normal"  # normal | chat_only
     pending_confirm: ConveneCard | None = None
     last_session_id: str | None = None
+    cli_work_dir: str | None = None
+    cli_session_cmd: str | None = None
+    cli_session_id: str | None = None
 
 
 def _strip_control_phrases(text: str) -> str:
@@ -311,6 +315,7 @@ def apply_chair_change(
     """Apply appoint/revoke. Failure keeps the current chair (D5)."""
     if plan.chair_change == "keep":
         return True, ""
+    before_id = state.active_chair.agent_id if state.active_chair else None
     current = state.active_chair
     current_label = current.label if current else "（無）"
 
@@ -323,6 +328,8 @@ def apply_chair_change(
             source="default",
             appointed_at_turn=state.turns,
         )
+        if state.active_chair.agent_id != before_id:
+            _reset_cli_session(state)
         return True, f"已恢復預設主席：{state.active_chair.label}。尚未開會。"
 
     # appoint
@@ -347,6 +354,8 @@ def apply_chair_change(
         state.active_chair = assignment_from_agent(
             result.agent, source="user-explicit", turn=state.turns
         )
+        if state.active_chair.agent_id != before_id:
+            _reset_cli_session(state)
         return True, f"已由 {state.active_chair.label} 主持。尚未開會。"
     if result.status == "ambiguous":
         names = "、".join(a.label for a in result.candidates)
@@ -361,6 +370,17 @@ def apply_chair_change(
             f"仍由 {current_label} 主持。"
         )
     return False, f"找不到「{plan.chair_ref}」。仍由 {current_label} 主持。"
+
+
+def _reset_cli_session(state: ChatState) -> None:
+    state.cli_session_cmd = None
+    state.cli_session_id = None
+
+
+def _remember_cli_session(state: ChatState, cmd: str, session_id: str, work_dir: str) -> None:
+    state.cli_work_dir = work_dir
+    state.cli_session_cmd = cmd
+    state.cli_session_id = session_id
 
 
 def _history_blob(state: ChatState) -> str:
@@ -380,14 +400,32 @@ def reply_as_chair(
 
     if agent.kind == "cli":
         cmd = cli_cmd_from_agent_id(agent.id)
-        prompt = build_chair_prompt(
-            chair_label_for(agent),
-            user_text,
-            _history_blob(state),
+        work_dir, cont, session_id, bound_cmd = bind_cli_workspace(
+            state.cli_work_dir,
+            cmd,
+            state.cli_session_cmd,
+            state.cli_session_id,
+        )
+        prompt = (
+            user_text.strip()
+            if cont
+            else build_chair_prompt(
+                chair_label_for(agent),
+                user_text,
+                _history_blob(state),
+            )
         )
         timeout = float(os.environ.get("XINONE_CHAIR_TIMEOUT", "90"))
         try:
-            text = run_cli_chair(cmd, prompt, timeout=timeout, runner=cli_runner)
+            text = run_cli_chair(
+                bound_cmd,
+                prompt,
+                timeout=timeout,
+                runner=cli_runner,
+                cwd=os.path.join(work_dir, bound_cmd),
+                continue_session=cont,
+                session_id=session_id,
+            )
         except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
             return ChairDecision(
                 action="reply",
@@ -397,6 +435,7 @@ def reply_as_chair(
                 ),
                 reason="cli chair error",
             )
+        _remember_cli_session(state, bound_cmd, session_id, work_dir)
         return ChairDecision(action="reply", message=text, reason=f"cli:{cmd}")
 
     if agent.kind in {"ollama", "openai"}:

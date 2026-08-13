@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -42,38 +43,62 @@ def build_cli_chair_command(
     prompt: str,
     *,
     last_message_path: str | None = None,
+    continue_session: bool = False,
+    session_id: str | None = None,
 ) -> list[str]:
     if cmd == "claude":
-        # Do not use --bare: it ignores OAuth/keychain and looks "logged out".
-        return [
+        # --safe-mode keeps OAuth but skips CLAUDE.md / hooks / skills.
+        # Do not use --bare (ignores keychain) or --no-session-persistence
+        # (forces a cold start every turn).
+        argv = [
             "claude",
             "-p",
             "--tools",
             "",
             "--output-format",
             "text",
-            "--no-session-persistence",
             "--permission-mode",
             "plan",
-            prompt,
+            "--safe-mode",
+            "--effort",
+            "low",
+            "--disable-slash-commands",
         ]
+        if continue_session and session_id:
+            argv.extend(["--resume", session_id])
+        elif session_id:
+            argv.extend(["--session-id", session_id])
+        argv.append(prompt)
+        return argv
     if cmd == "codex":
-        argv = [
-            "codex",
-            "exec",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            "-s",
-            "read-only",
-            "--color",
-            "never",
-        ]
+        if continue_session:
+            argv = [
+                "codex",
+                "exec",
+                "resume",
+                "--last",
+                "--skip-git-repo-check",
+                "-s",
+                "read-only",
+                "--color",
+                "never",
+            ]
+        else:
+            argv = [
+                "codex",
+                "exec",
+                "--skip-git-repo-check",
+                "-s",
+                "read-only",
+                "--color",
+                "never",
+            ]
         if last_message_path:
             argv.extend(["-o", last_message_path])
         argv.append(prompt)
         return argv
     if cmd == "gemini":
-        return [
+        argv = [
             "gemini",
             "-p",
             prompt,
@@ -82,17 +107,48 @@ def build_cli_chair_command(
             "-o",
             "text",
         ]
+        if continue_session:
+            argv.extend(["--resume", "latest"])
+        return argv
     if cmd == "grok":
-        return [
-            "grok",
-            "-p",
-            prompt,
-            "--no-subagents",
-            "--disable-web-search",
-            "--output-format",
-            "plain",
-        ]
+        argv = ["grok"]
+        if continue_session:
+            argv.append("-c")
+        argv.extend(
+            [
+                "-p",
+                prompt,
+                "--no-subagents",
+                "--disable-web-search",
+                "--output-format",
+                "plain",
+            ]
+        )
+        return argv
     raise ValueError(f"no chair recipe for {cmd!r}")
+
+
+def new_cli_session_id() -> str:
+    return str(uuid.uuid4())
+
+
+def bind_cli_workspace(
+    work_dir: str | None,
+    cmd: str,
+    prev_cmd: str | None,
+    prev_session_id: str | None,
+) -> tuple[str, bool, str, str]:
+    """
+    Isolate CLI chair from the user's cwd (often ~).
+
+    Returns (work_dir, continue_session, session_id, cmd).
+    """
+    root = work_dir or tempfile.mkdtemp(prefix="xinone-chair-")
+    chair_dir = Path(root) / cmd
+    chair_dir.mkdir(parents=True, exist_ok=True)
+    if prev_cmd == cmd and prev_session_id:
+        return root, True, prev_session_id, cmd
+    return root, False, new_cli_session_id(), cmd
 
 
 def login_hint(cmd: str) -> str:
@@ -170,7 +226,12 @@ def probe_cli_chair_ready(
     return result
 
 
-def _default_runner(argv: list[str], timeout: float) -> tuple[int, str, str]:
+def _default_runner(
+    argv: list[str],
+    timeout: float,
+    *,
+    cwd: str | None = None,
+) -> tuple[int, str, str]:
     env = os.environ.copy()
     env.setdefault("NO_COLOR", "1")
     env.setdefault("CLICOLOR", "0")
@@ -181,6 +242,7 @@ def _default_runner(argv: list[str], timeout: float) -> tuple[int, str, str]:
         text=True,
         timeout=timeout,
         env=env,
+        cwd=cwd,
     )
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
@@ -191,6 +253,9 @@ def run_cli_chair(
     *,
     timeout: float = 90.0,
     runner: Runner | None = None,
+    cwd: str | None = None,
+    continue_session: bool = False,
+    session_id: str | None = None,
 ) -> str:
     """Run one headless chair turn. Raises RuntimeError on failure."""
     last_path: str | None = None
@@ -204,8 +269,20 @@ def run_cli_chair(
         last_path = tmp.name
         tmp.close()
     try:
-        argv = build_cli_chair_command(cmd, prompt, last_message_path=last_path)
-        code, stdout, stderr = (runner or _default_runner)(argv, timeout)
+        argv = build_cli_chair_command(
+            cmd,
+            prompt,
+            last_message_path=last_path,
+            continue_session=continue_session,
+            session_id=session_id,
+        )
+
+        def _run(run_argv: list[str], run_timeout: float) -> tuple[int, str, str]:
+            if runner is not None:
+                return runner(run_argv, run_timeout)
+            return _default_runner(run_argv, run_timeout, cwd=cwd)
+
+        code, stdout, stderr = _run(argv, timeout)
         combined = f"{stdout}\n{stderr}"
         if _looks_logged_out(combined):
             raise RuntimeError(login_hint(cmd))
