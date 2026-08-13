@@ -8,6 +8,7 @@ import re
 import shutil
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -32,6 +33,27 @@ _ROLE_CYCLE: list[tuple[str, str, str]] = [
 ]
 
 
+# Startup default-chair pool (D2). First chair_capable wins.
+DEFAULT_CHAIR_ORDER: tuple[str, ...] = (
+    "claude",
+    "codex",
+    "gemini",
+    "grok",
+    "qwen",
+    "gemma",
+    "agy",
+    "mock",
+)
+
+_CLI_TOOLS: list[tuple[str, str, list[str]]] = [
+    ("claude", "Claude Code CLI", ["claude", "claude code", "claude-code"]),
+    ("codex", "Codex CLI", ["codex"]),
+    ("gemini", "Gemini CLI", ["gemini"]),
+    ("grok", "Grok", ["grok"]),
+    ("agentx", "agentX", ["agy", "agentx", "agent x"]),
+]
+
+
 @dataclass
 class AgentInfo:
     id: str
@@ -43,9 +65,20 @@ class AgentInfo:
     api_key_env: str | None = None
     runnable: bool = True  # can seat-run today
     detail: str = ""
+    aliases: list[str] = field(default_factory=list)
+    chair_capable: bool = False
+    chair_unavailable_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class ResolveResult:
+    status: str  # unique | ambiguous | not_capable | not_found
+    agent: AgentInfo | None = None
+    candidates: list[AgentInfo] = field(default_factory=list)
+    message: str = ""
 
 
 @dataclass
@@ -118,6 +151,9 @@ def _discover_ollama(host: str | None = None) -> list[AgentInfo]:
                     base_url=base + "/v1",
                     runnable=False,
                     detail="skipped (embedding/vision)",
+                    aliases=_ollama_aliases(name),
+                    chair_capable=False,
+                    chair_unavailable_reason="skipped (embedding/vision)",
                 )
             )
             continue
@@ -133,6 +169,8 @@ def _discover_ollama(host: str | None = None) -> list[AgentInfo]:
                 api_key_env=None,
                 runnable=True,
                 detail="chat model",
+                aliases=_ollama_aliases(name),
+                chair_capable=True,
             )
         )
     if not any(a.runnable for a in out):
@@ -170,6 +208,8 @@ def _discover_openai() -> list[AgentInfo]:
                 api_key_env="OPENAI_API_KEY",
                 runnable=False,
                 detail="set XINONE_API_KEY or OPENAI_API_KEY",
+                chair_capable=False,
+                chair_unavailable_reason="no API key",
             )
         ]
     # Key present or non-cloud endpoint
@@ -185,6 +225,8 @@ def _discover_openai() -> list[AgentInfo]:
                 api_key_env="OPENAI_API_KEY" if key else None,
                 runnable=True,
                 detail="env model",
+                aliases=_ollama_aliases(model) if model else [],
+                chair_capable=True,
             )
         ]
     return [
@@ -197,20 +239,16 @@ def _discover_openai() -> list[AgentInfo]:
             base_url=base,
             runnable=False,
             detail="no API key",
+            chair_capable=False,
+            chair_unavailable_reason="no API key",
         )
     ]
 
 
 def _discover_cli() -> list[AgentInfo]:
-    """Detect CLI agents on PATH (informational; not all runnable in-process yet)."""
-    tools = [
-        ("claude", "Claude Code CLI"),
-        ("codex", "Codex CLI"),
-        ("gemini", "Gemini CLI"),
-        ("agentx", "agentX"),
-    ]
+    """Detect CLI agents on PATH (informational; not chair-capable until P1 adapter)."""
     out: list[AgentInfo] = []
-    for cmd, label in tools:
+    for cmd, label, aliases in _CLI_TOOLS:
         path = shutil.which(cmd)
         out.append(
             AgentInfo(
@@ -220,6 +258,9 @@ def _discover_cli() -> list[AgentInfo]:
                 available=bool(path),
                 runnable=False,  # no in-process seat runner yet
                 detail=path or "not on PATH",
+                aliases=list(aliases),
+                chair_capable=False,
+                chair_unavailable_reason="尚無 chair adapter（P1）",
             )
         )
     return out
@@ -263,6 +304,8 @@ def discover_agents(
                 model="mock",
                 runnable=True,
                 detail="fallback when no real agents",
+                aliases=["mock"],
+                chair_capable=True,
             )
         )
         notes.append("no real agents — mock fallback")
@@ -278,6 +321,8 @@ def discover_agents(
                 model="mock",
                 runnable=True,
                 detail="available; excluded from all-hands when reals exist",
+                aliases=["mock"],
+                chair_capable=True,
             )
         )
 
@@ -377,30 +422,142 @@ def build_all_hands_preset(
     }
 
 
+def _norm_ref(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _ollama_aliases(model: str) -> list[str]:
+    name = (model or "").strip()
+    if not name:
+        return []
+    stem = name.split(":")[0]
+    aliases = [name, stem, name.replace(":", "_"), stem.lower()]
+    low = stem.lower()
+    if low.startswith("qwen"):
+        aliases.append("qwen")
+    if low.startswith("gemma"):
+        aliases.append("gemma")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in aliases:
+        key = item.lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(item)
+    return out
+
+
+def _agent_tokens(agent: AgentInfo) -> set[str]:
+    raw = [agent.id, agent.label, agent.model or "", *agent.aliases]
+    if ":" in agent.id:
+        raw.append(agent.id.split(":", 1)[1])
+    if "/" in agent.label:
+        raw.append(agent.label.split("/", 1)[1])
+    tokens: set[str] = set()
+    for item in raw:
+        n = _norm_ref(item)
+        if not n:
+            continue
+        tokens.add(n)
+        tokens.add(n.replace(":", "_"))
+        tokens.add(n.replace("_", ":"))
+        tokens.add(n.split(":")[0])
+        tokens.add(n.split("/")[-1])
+    return {t for t in tokens if t}
+
+
+def resolve_agent_ref(
+    ref: str,
+    agents: Sequence[AgentInfo],
+    *,
+    for_chair: bool = False,
+) -> ResolveResult:
+    """Resolve a user agent string. Never pick the first of several hits."""
+    key = _norm_ref(ref)
+    if not key:
+        return ResolveResult(status="not_found", message="empty ref")
+
+    hits = [a for a in agents if key in _agent_tokens(a)]
+    if not hits:
+        return ResolveResult(status="not_found", message=f"not found: {ref}")
+    if len(hits) > 1:
+        return ResolveResult(
+            status="ambiguous",
+            candidates=hits,
+            message=f"ambiguous: {ref}",
+        )
+    agent = hits[0]
+    if for_chair and not agent.chair_capable:
+        return ResolveResult(
+            status="not_capable",
+            agent=agent,
+            candidates=[agent],
+            message=agent.chair_unavailable_reason or "not chair_capable",
+        )
+    return ResolveResult(status="unique", agent=agent, candidates=[agent], message="ok")
+
+
+def _pool_match(pool: str, agent: AgentInfo) -> bool:
+    tokens = _agent_tokens(agent)
+    if pool == "agy":
+        return bool(tokens & {"agy", "agentx", "agent x"}) or agent.id == "cli:agentx"
+    if pool == "mock":
+        return agent.kind == "mock" or agent.id == "mock"
+    return pool in tokens or agent.id == f"cli:{pool}"
+
+
+def pick_default_chair_agent(
+    agents: Sequence[AgentInfo],
+    *,
+    preferred: str | None = None,
+) -> ResolveResult:
+    """
+    First chair_capable agent in DEFAULT_CHAIR_ORDER.
+
+    If preferred is set and fails, return that failure (D5: no silent swap).
+    """
+    if preferred:
+        return resolve_agent_ref(preferred, agents, for_chair=True)
+
+    for pool in DEFAULT_CHAIR_ORDER:
+        capable = [a for a in agents if _pool_match(pool, a) and a.chair_capable]
+        if capable:
+            return ResolveResult(
+                status="unique",
+                agent=capable[0],
+                candidates=capable,
+                message=f"default:{pool}",
+            )
+    return ResolveResult(status="not_found", message="no chair_capable agent")
+
+
 def format_agents_table(discovery: DiscoveryResult) -> str:
     lines = [
         f"discovered: {len(discovery.agents)}  runnable(all-hands): {len(discovery.runnable)}",
         discovery.summary_line(),
         "",
-        f"{'status':8} {'kind':8} {'run':5} label",
-        "-" * 56,
+        f"{'status':8} {'kind':8} {'chair':5} {'seat':5} label",
+        "-" * 64,
     ]
     for a in discovery.agents:
         st = "UP" if a.available else "DOWN"
-        run = "yes" if a.runnable and a in discovery.runnable else (
-            "yes*" if a.runnable else "no"
-        )
-        # runnable but excluded (mock when reals exist)
-        if a.runnable and a not in discovery.runnable:
-            run = "skip"
-        lines.append(f"{st:8} {a.kind:8} {run:5} {a.label}")
-        if a.detail:
-            lines.append(f"{'':8} {'':8} {'':5}  → {a.detail}")
+        chair = "yes" if a.chair_capable else "no"
+        if a.runnable and a in discovery.runnable:
+            seat = "yes"
+        elif a.runnable:
+            seat = "skip"
+        else:
+            seat = "no"
+        lines.append(f"{st:8} {a.kind:8} {chair:5} {seat:5} {a.label}")
+        extra = a.chair_unavailable_reason or a.detail
+        if extra:
+            lines.append(f"{'':8} {'':8} {'':5} {'':5}  → {extra}")
     if discovery.notes:
         lines.append("")
         lines.append("notes:")
         for n in discovery.notes:
             lines.append(f"  - {n}")
     lines.append("")
+    lines.append("columns: detected=status  chair=chair_capable  seat=runnable")
     lines.append("all-hands: every runnable agent joins as a seat (+ synthesizer)")
     return "\n".join(lines) + "\n"

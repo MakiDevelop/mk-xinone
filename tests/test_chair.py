@@ -21,13 +21,14 @@ def test_council_force():
     assert d.goal
 
 
-def test_evaluate_hint_convenes():
+def test_evaluate_hint_does_not_convene():
+    """D4: 評估／分析 alone must not auto-convene."""
     d = decide_chair(
         "請多角度評估：是否該做 mk-xinone 這個產品",
         ChatState(),
         backend="mock",
     )
-    assert d.action == "convene"
+    assert d.action == "reply"
 
 
 def test_short_chat_stays_with_chair():

@@ -154,6 +154,34 @@ def read_session(session_dir: Path) -> dict[str, Any]:
     }
 
 
+def list_sessions(sessions_root: Path) -> list[Path]:
+    """Valid session dirs (have meta.json), newest created_at first."""
+    root = Path(sessions_root)
+    if not root.is_dir():
+        return []
+    rows: list[tuple[str, Path]] = []
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        meta_path = child / "meta.json"
+        if not meta_path.is_file():
+            continue
+        created = ""
+        try:
+            meta = load_json(meta_path)
+            created = str(meta.get("created_at") or "")
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+        rows.append((created, child))
+    rows.sort(key=lambda item: item[0], reverse=True)
+    return [path for _created, path in rows]
+
+
+def latest_session(sessions_root: Path) -> Path | None:
+    listed = list_sessions(sessions_root)
+    return listed[0] if listed else None
+
+
 def format_session_show(bundle: dict[str, Any], *, verbose: bool = False) -> str:
     meta = bundle["meta"]
     lines: list[str] = []

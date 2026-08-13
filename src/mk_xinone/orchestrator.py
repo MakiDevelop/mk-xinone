@@ -93,6 +93,7 @@ def run_council(
     base_url: str | None = None,
     api_key: str | None = None,
     model: str | None = None,
+    chair: dict[str, Any] | None = None,
 ) -> Path:
     """
     Run a council and write a session directory.
@@ -184,6 +185,13 @@ def run_council(
         if preset.get("all_hands"):
             m["all_hands"] = True
             m["agent_count"] = len(workers_def)
+        if chair:
+            m["chair"] = {
+                "agent_id": str(chair.get("agent_id") or ""),
+                "label": str(chair.get("label") or ""),
+                "source": str(chair.get("source") or "default"),
+                "appointed_at_turn": int(chair.get("appointed_at_turn") or 0),
+            }
         m.update(extra)
         return m
 

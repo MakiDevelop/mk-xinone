@@ -14,6 +14,16 @@
     },
     "created_at": { "type": "string" },
     "input_summary": { "type": "string" },
+    "chair": {
+      "type": "object",
+      "description": "Optional chair provenance (no secrets, no chat history).",
+      "properties": {
+        "agent_id": { "type": "string" },
+        "label": { "type": "string" },
+        "source": { "type": "string", "enum": ["default", "user-explicit"] },
+        "appointed_at_turn": { "type": "integer" }
+      }
+    },
     "seats": {
       "type": "array",
       "items": {

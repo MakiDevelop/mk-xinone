@@ -15,13 +15,33 @@ from mk_xinone.agents import (
     build_all_hands_preset,
     discover_agents,
     format_agents_table,
+    pick_default_chair_agent,
 )
 from mk_xinone.backends.openai_compatible import resolve_openai_settings
-from mk_xinone.chair import ChatState, ChatTurn, decide_chair
+from mk_xinone.chair import (
+    ChatState,
+    ChatTurn,
+    ConveneCard,
+    apply_chair_change,
+    assignment_from_agent,
+    decide_chair,
+    format_convene_card,
+    parse_confirm_reply,
+    parse_intent,
+)
 from mk_xinone.orchestrator import run_council
 from mk_xinone.paths import presets_dir, repo_root, sessions_dir
 from mk_xinone.presets import load_preset, summarize_presets
-from mk_xinone.session_io import format_session_show, read_session
+from mk_xinone.session_io import (
+    format_session_show,
+    latest_session,
+    read_session,
+)
+
+_SUBCOMMANDS = frozenset(
+    {"list-presets", "show", "agents", "run", "chat", "doctor"}
+)
+_HELP_FLAGS = frozenset({"-h", "--help", "--version"})
 
 
 def cmd_list_presets(_: argparse.Namespace) -> int:
@@ -166,29 +186,190 @@ def cmd_run(args: argparse.Namespace) -> int:
     return _print_run_result(session_dir, verbose=args.verbose)
 
 
+def _chair_prompt(state: ChatState) -> str:
+    if state.pending_confirm is not None:
+        return "確認> "
+    label = state.active_chair.label if state.active_chair else "主席"
+    return f"{label}（主席）> "
+
+
+def _print_chair(state: ChatState, message: str) -> None:
+    label = state.active_chair.label if state.active_chair else "主席"
+    print()
+    print(f"{label}（主席）> {message}")
+    print()
+
+
+def _resolve_chat_preset(
+    preset_id: str, args: argparse.Namespace
+) -> tuple[dict, object]:
+    class _Args:
+        pass
+
+    a = _Args()
+    a.preset = preset_id
+    a.no_all_agents = getattr(args, "no_all_agents", False)
+    a.backend = getattr(args, "backend", "mock")
+    return _resolve_council_preset(a)  # type: ignore[arg-type]
+
+
+def _build_confirm_card(
+    goal: str, state: ChatState, preset_id: str, args: argparse.Namespace
+) -> ConveneCard | None:
+    if state.active_chair is None:
+        return None
+    try:
+        preset, _disc = _resolve_chat_preset(preset_id, args)
+    except (FileNotFoundError, ValueError):
+        preset = {"id": preset_id, "seats": []}
+    n_seats = len(preset.get("seats") or [])
+    roster = "all-hands" if preset.get("all_hands") else str(preset.get("id") or preset_id)
+    return ConveneCard(
+        goal=goal,
+        chair=state.active_chair,
+        seat_count=n_seats,
+        roster_label=roster,
+    )
+
+
+def _show_confirm_card(card: ConveneCard) -> None:
+    print()
+    sys.stdout.write(format_convene_card(card))
+
+
+def _run_confirmed_council(
+    state: ChatState,
+    *,
+    preset_id: str,
+    backend: str,
+    args: argparse.Namespace,
+    verbose: bool,
+) -> int:
+    card = state.pending_confirm
+    if card is None or state.active_chair is None:
+        return 0
+    try:
+        preset, disc = _resolve_chat_preset(preset_id, args)
+    except (FileNotFoundError, ValueError) as e:
+        print(str(e), file=sys.stderr)
+        state.pending_confirm = None
+        return 1
+
+    run_backend, base_url, api_key, model = _backend_kwargs(backend, args)
+    n_seats = len(preset.get("seats") or [])
+    print(
+        f"（開會中… {disc.summary_line()} → "
+        f"{'all-hands' if preset.get('all_hands') else preset.get('id')} "
+        f"{n_seats} seats）"
+    )
+
+    def progress(msg: str) -> None:
+        print(f"… {msg}", flush=True)
+
+    try:
+        session_dir = run_council(
+            goal=card.goal,
+            preset=preset,
+            backend=run_backend if not preset.get("all_hands") else "mock",
+            sessions_root=sessions_dir(),
+            on_progress=progress,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            chair=state.active_chair.to_meta(),
+        )
+    except (OSError, ValueError, RuntimeError, FileExistsError) as e:
+        print(f"council failed: {e}", file=sys.stderr)
+        state.pending_confirm = None
+        return 1
+
+    state.pending_confirm = None
+    state.last_session_id = session_dir.name
+    code = _print_run_result(session_dir, verbose=verbose)
+    _print_chair(state, "會開完了。其它席次再次安靜；有需要再叫我開會。")
+    return code
+
+
 def cmd_chat(args: argparse.Namespace) -> int:
-    """Chair-first REPL: only Chair speaks unless a council is convened."""
+    """NL-first REPL: confirm card before convene; slash is an escape hatch."""
     disc0 = discover_agents()
-    print("mk-xinone chat — 你跟「主席」對話；其它席次預設安靜")
-    print(f"preset={args.preset}  backend={args.backend}")
-    print(f"agents: {disc0.summary_line()}（開會時預設全員加入）")
-    print("指令: /council <目標>  強制開會（全員）")
-    print("      /agents  列出可用 Agent")
-    print("      /preset <id>  /backend mock|openai|ollama  /verbose  /quit")
+    preferred = getattr(args, "chair", None)
+    picked = pick_default_chair_agent(disc0.agents, preferred=preferred)
+    fallback_note = ""
+    if preferred and picked.status != "unique":
+        fallback_note = (
+            picked.message or f"無法指派 {preferred} 當主席"
+        )
+        picked = pick_default_chair_agent(disc0.agents)
+
+    if picked.status != "unique" or picked.agent is None:
+        print("沒有可主持的 agent（含 mock）。", file=sys.stderr)
+        return 1
+
+    chair = assignment_from_agent(picked.agent, source="default", turn=0)
+    state = ChatState(default_chair=chair, active_chair=chair)
+    if picked.agent.kind == "mock":
+        print("目前沒有可主持的真實 agent，由 Mock 擔任主席。")
+    print(f"主席：{chair.label}（可改：讓 Gemini 當主席）")
+    if fallback_note:
+        print(f"（--chair {preferred} 失敗：{fallback_note}；未靜默假裝已指派）")
+    print(f"agents: {disc0.summary_line()}")
+    print()
+    print("人話例句：")
+    print("  讓 Codex 當主席")
+    print("  召集大家開會，評估 …")
+    print("  有哪些 agent？誰能當主席？")
+    print("  上一場會議怎樣？")
+    print("  先不要開會，幫我整理三點")
     print()
 
     preset_id = args.preset
     backend = args.backend
     verbose = args.verbose
     last_code = 0
-    state = ChatState()
+
+    def _remember(user_text: str, reply: str) -> None:
+        state.history.append(ChatTurn(role="user", content=user_text))
+        state.history.append(ChatTurn(role="chair", content=reply))
+        state.turns += 1
 
     while True:
         try:
-            line = input("you> ").strip()
+            line = input(_chair_prompt(state)).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
+
+        if state.pending_confirm is not None:
+            action = parse_confirm_reply(line)
+            if action == "confirm":
+                last_code = _run_confirmed_council(
+                    state,
+                    preset_id=preset_id,
+                    backend=backend,
+                    args=args,
+                    verbose=verbose,
+                )
+                continue
+            if action == "cancel":
+                state.pending_confirm = None
+                msg = "已取消開會，只跟主席聊。"
+                _print_chair(state, msg)
+                _remember(line or "n", msg)
+                last_code = 0
+                continue
+            if action == "appoint":
+                plan = parse_intent(line)
+                ok, msg = apply_chair_change(state, plan, discover_agents().agents)
+                print(msg)
+                if ok and state.active_chair is not None and state.pending_confirm:
+                    state.pending_confirm.chair = state.active_chair
+                    _show_confirm_card(state.pending_confirm)
+                last_code = 0
+                continue
+            # chatter: drop confirm, treat as a new normal turn
+            state.pending_confirm = None
+
         if not line:
             continue
         if line in {"/quit", "/exit", "/q", "quit", "exit"}:
@@ -214,100 +395,107 @@ def cmd_chat(args: argparse.Namespace) -> int:
             print(f"verbose → {verbose}")
             continue
         if line in {"/help", "help", "?"}:
-            print("預設只跟主席聊。其它席次不會發言。")
-            print("/council <目標> 開會（偵測到的 runnable agents 全員加入）")
-            print("/agents 列出 Agent；/preset /backend /verbose /quit")
+            print("人話為主。slash 只是逃生口。")
+            print("  讓 Codex 當主席 / 恢復預設主席")
+            print("  召集大家開會，評估 <目標>")
+            print("  有哪些 agent？ / 上一場會議怎樣？")
+            print("進階：/council <目標>  /agents  /preset  /backend  /quit")
             continue
         if line in {"/agents", "/agent"}:
             sys.stdout.write(format_agents_table(discover_agents()))
             continue
 
-        force_convene = False
         user_text = line
+        slash_council = False
         if line.startswith("/council"):
-            force_convene = True
             parts = line.split(maxsplit=1)
             user_text = parts[1].strip() if len(parts) == 2 else ""
             if not user_text:
-                print("用法: /council <要審議的目標>")
+                print("用法: /council <要審議的目標>（仍會先出確認卡）")
+                continue
+            slash_council = True
+
+        agents = discover_agents().agents
+        if slash_council:
+            plan = parse_intent(f"召集大家開會，{user_text}")
+            if plan.primary != "convene":
+                plan.primary = "convene"
+                plan.goal = user_text
+                plan.explicit_multi_seat = True
+                plan.reason = "slash /council"
+        else:
+            plan = parse_intent(user_text)
+
+        if plan.primary == "exit":
+            break
+
+        if plan.chair_change != "keep":
+            ok, msg = apply_chair_change(state, plan, agents)
+            print(msg)
+            if not ok and plan.primary == "convene":
+                last_code = 0
+                continue
+            if plan.primary == "reply":
+                last_code = 0
                 continue
 
-        run_backend, base_url, api_key, model = _backend_kwargs(backend, args)
-        # decide_chair: mock uses "mock"; openai path needs openai
-        chair_backend = "mock" if backend == "mock" else "openai"
+        if plan.stay_chat_only:
+            state.convene_mode = "chat_only"
 
+        if plan.primary == "list_agents":
+            sys.stdout.write(format_agents_table(discover_agents()))
+            last_code = 0
+            continue
+
+        if plan.primary == "show_last_session":
+            latest = latest_session(sessions_dir())
+            if latest is None:
+                _print_chair(state, "還沒有會議 session。")
+            else:
+                try:
+                    bundle = read_session(latest)
+                    sys.stdout.write(format_session_show(bundle))
+                except FileNotFoundError as e:
+                    print(str(e), file=sys.stderr)
+            last_code = 0
+            continue
+
+        if plan.primary == "clarify":
+            q = plan.question or "能再說清楚一點嗎？"
+            _print_chair(state, q)
+            _remember(user_text, q)
+            last_code = 0
+            continue
+
+        if plan.primary == "convene" and plan.goal:
+            # explicit collective unlocks chat_only
+            state.convene_mode = "normal"
+            card = _build_confirm_card(plan.goal, state, preset_id, args)
+            if card is None:
+                _print_chair(state, "還沒有主席，無法開會。")
+                last_code = 0
+                continue
+            state.pending_confirm = card
+            _show_confirm_card(card)
+            last_code = 0
+            continue
+
+        _run_backend, base_url, api_key, model = _backend_kwargs(backend, args)
+        chair_backend = "mock" if backend == "mock" else "openai"
         decision = decide_chair(
             user_text,
             state,
             backend=chair_backend,
-            force_convene=force_convene,
+            force_convene=False,
             base_url=base_url,
             api_key=api_key,
             model=model,
         )
-
-        state.history.append(ChatTurn(role="user", content=user_text))
-        state.turns += 1
-
-        # Always show chair message first
-        print()
-        print(f"主席> {decision.message}")
+        _print_chair(state, decision.message)
         if verbose and decision.reason:
             print(f"      (reason: {decision.reason})")
-        print()
-        state.history.append(ChatTurn(role="chair", content=decision.message))
-
-        if decision.action != "convene":
-            # Other seats stay silent
-            last_code = 0
-            continue
-
-        # Convene multi-seat — only now other seats speak (default: all runnable agents)
-        try:
-            class _Args:
-                pass
-
-            a = _Args()
-            a.preset = preset_id
-            a.no_all_agents = getattr(args, "no_all_agents", False)
-            a.backend = backend
-            preset, disc = _resolve_council_preset(a)  # type: ignore[arg-type]
-        except (FileNotFoundError, ValueError) as e:
-            print(str(e), file=sys.stderr)
-            last_code = 1
-            continue
-
-        goal = (decision.goal or user_text).strip()
-        n_seats = len(preset.get("seats") or [])
-        print(
-            f"（開會中… {disc.summary_line()} → "
-            f"{'all-hands' if preset.get('all_hands') else preset.get('id')} "
-            f"{n_seats} seats）"
-        )
-
-        def progress(msg: str) -> None:
-            print(f"… {msg}", flush=True)
-
-        try:
-            session_dir = run_council(
-                goal=goal,
-                preset=preset,
-                backend=run_backend if not preset.get("all_hands") else "mock",
-                sessions_root=sessions_dir(),
-                on_progress=progress,
-                base_url=base_url,
-                api_key=api_key,
-                model=model,
-            )
-        except (OSError, ValueError, RuntimeError, FileExistsError) as e:
-            print(f"council failed: {e}", file=sys.stderr)
-            last_code = 1
-            continue
-
-        last_code = _print_run_result(session_dir, verbose=verbose)
-        print()
-        print("主席> 會開完了。其它席次再次安靜；有需要再叫我開會。")
-        print()
+        _remember(user_text, decision.message)
+        last_code = 0
 
     return last_code
 
@@ -373,7 +561,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ok = False
 
     print(f"version: {__version__}")
-    print("tip: chat = 主席陪聊；/council 開會預設全員；xinone agents 查看清單")
+    print("tip: 人話說「召集大家開會，評估 …」；slash /council 仍可用")
     return 0 if ok else 1
 
 
@@ -383,7 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="mk-xinone — chair chat + on-demand multi-seat council",
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = p.add_subparsers(dest="command", required=True)
+    sub = p.add_subparsers(dest="command", required=False)
 
     sp = sub.add_parser("list-presets", help="List built-in presets")
     sp.set_defaults(func=cmd_list_presets)
@@ -441,6 +629,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--api-key", default=None)
     sp.add_argument("--model", default=None)
     sp.add_argument("--verbose", "-v", action="store_true")
+    sp.add_argument(
+        "--chair",
+        default=None,
+        help="Startup chair label (e.g. Codex). Fails visibly if not chair_capable.",
+    )
     sp.set_defaults(func=cmd_chat)
 
     sp = sub.add_parser("doctor", help="Check install / demo / API env")
@@ -468,9 +661,21 @@ def _apply_ollama_defaults(args: argparse.Namespace) -> None:
         args.api_key = os.environ.get("OPENAI_API_KEY", "ollama")
 
 
+def _default_to_chat(argv: list[str]) -> list[str]:
+    if not argv:
+        return ["chat"]
+    if argv[0] in _SUBCOMMANDS or argv[0] in _HELP_FLAGS:
+        return argv
+    return ["chat", *argv]
+
+
 def main(argv: list[str] | None = None) -> None:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    raw = _default_to_chat(raw)
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
+    if not getattr(args, "func", None):
+        args = parser.parse_args(["chat"])
     _apply_ollama_defaults(args)
     code = args.func(args)
     raise SystemExit(code)
