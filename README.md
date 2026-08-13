@@ -20,7 +20,7 @@
 | OpenAI-compatible / Ollama 真 backend | **yes**（`--backend openai\|ollama`） |
 | Done-gate / no_self_accept 硬擋 | **yes**（未過不得 `completed`） |
 | Wall 2× 重試 | **yes** |
-| `xinone chat` REPL | **yes**（人話開會 + 確認卡 + 啟動指派主席） |
+| `xinone chat` REPL | **yes**（人話開會 + 確認卡 + CLI/Ollama 真主席） |
 | Session 不覆寫 / 原子寫 / redact | **yes** |
 | Web UI | **不做**（v1 = CLI only） |
 

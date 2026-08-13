@@ -65,6 +65,6 @@ OpenAI-compatible 真 backend → `council-lite` 真跑 → 席位進度可見 �
 
 → [`docs/prd-nl-chair-convenience-v1.md`](prd-nl-chair-convenience-v1.md)
 
-P0 已實作（2026-08-13）：NL convene + 啟動指派主席 + 確認卡。驗收：`pytest` 全綠；§10 10 句 + 負向。P1：CLI chair adapter、all-hands 身份優先。
+P0 + P1 日常可用（2026-08-13）：NL convene + 確認卡 + CLI 真主席（Claude/Codex/Gemini/Grok）+ all-hands 身份制。`xinone` 已掛 `~/.local/bin`。
 
 Council 原始討論：`~/Documents/agent-council/2026-08-13-xinone-nl-chair-ux/`
