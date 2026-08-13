@@ -60,18 +60,20 @@ def redact_secrets(text: str) -> str:
 
 
 def slugify(text: str, max_len: int = 40) -> str:
-    s = text.lower().strip()
+    """Path-safe slug. CJK-only goals get a short hash so they are not all 'run'."""
+    import hashlib
+
+    raw = (text or "").strip()
+    s = raw.lower()
     s = re.sub(r"https?://\S+", "url", s)
     s = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "-", s)
     s = re.sub(r"-+", "-", s).strip("-")
-    if not s:
-        s = "run"
     ascii_s = re.sub(r"[^a-z0-9-]+", "", s)
     if len(ascii_s) >= 3:
-        s = ascii_s
-    else:
-        s = "run"
-    return s[:max_len].rstrip("-")
+        return ascii_s[:max_len].rstrip("-")
+    # CJK / emoji / empty → stable short id from original text
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+    return f"goal-{digest}"
 
 
 def new_session_id(goal: str) -> str:

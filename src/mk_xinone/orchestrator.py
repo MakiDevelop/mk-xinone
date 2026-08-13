@@ -176,7 +176,8 @@ def run_council(
         for attempt in range(1, max_attempts + 1):
             _set_status(sid, "running")
             write_json(out / "meta.json", _meta("running"))
-            suffix = f" attempt {attempt}/{max_attempts}" if max_attempts > 1 else ""
+            # Only show attempt counter on retries (first try stays clean)
+            suffix = f" retry {attempt}/{max_attempts}" if attempt > 1 else ""
             _emit(on_progress, f"seat {role} ({sid}) running…{suffix}")
 
             result = runner.run_seat(

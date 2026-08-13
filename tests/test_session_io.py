@@ -8,6 +8,13 @@ def test_slugify_url():
     assert "url" in slugify("see https://github.com/foo/bar now")
 
 
+def test_slugify_cjk_not_bare_run():
+    s = slugify("哈囉～")
+    assert s.startswith("goal-")
+    assert s != "run"
+    assert len(s) >= 10
+
+
 def test_demo_session_readable():
     demo = repo_root() / "sessions" / "demo-repo-council-2026-08-12"
     bundle = read_session(demo)
