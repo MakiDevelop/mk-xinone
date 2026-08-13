@@ -393,7 +393,7 @@ def reply_as_chair(
                 action="reply",
                 message=(
                     f"{chair_label_for(agent)} 這一輪沒回成（{exc}）。"
-                    "沒有開會，也沒有換成別人。"
+                    "沒有開會，也沒有換成別人。可說：讓 Qwen 當主席"
                 ),
                 reason="cli chair error",
             )

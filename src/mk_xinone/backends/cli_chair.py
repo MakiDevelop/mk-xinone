@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -10,8 +11,17 @@ from pathlib import Path
 
 # cmd name on PATH → argv builder. No approval-bypass flags.
 _CHAIR_CMDS = frozenset({"claude", "codex", "gemini", "grok"})
+_LOGIN_HINTS = (
+    "not logged in",
+    "please run /login",
+    "please run claude auth login",
+    "auth required",
+    "not authenticated",
+)
 
 Runner = Callable[[list[str], float], tuple[int, str, str]]
+
+_probe_cache: dict[str, tuple[bool, str]] = {}
 
 
 def has_cli_chair_recipe(cmd: str) -> bool:
@@ -34,15 +44,17 @@ def build_cli_chair_command(
     last_message_path: str | None = None,
 ) -> list[str]:
     if cmd == "claude":
+        # Do not use --bare: it ignores OAuth/keychain and looks "logged out".
         return [
             "claude",
             "-p",
-            "--bare",
             "--tools",
             "",
             "--output-format",
             "text",
             "--no-session-persistence",
+            "--permission-mode",
+            "plan",
             prompt,
         ]
     if cmd == "codex":
@@ -83,6 +95,81 @@ def build_cli_chair_command(
     raise ValueError(f"no chair recipe for {cmd!r}")
 
 
+def login_hint(cmd: str) -> str:
+    if cmd == "claude":
+        return "未登入，請先執行：claude auth login"
+    if cmd == "codex":
+        return "未登入，請先執行：codex login"
+    if cmd == "gemini":
+        return "未登入，請先執行：gemini 登入"
+    if cmd == "grok":
+        return "未登入，請先執行：grok login"
+    return "未登入"
+
+
+def _looks_logged_out(text: str) -> bool:
+    blob = (text or "").lower()
+    return any(hint in blob for hint in _LOGIN_HINTS)
+
+
+def parse_claude_auth_status(stdout: str) -> tuple[bool, str]:
+    raw = (stdout or "").strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        if _looks_logged_out(raw):
+            return False, login_hint("claude")
+        return False, login_hint("claude")
+    if isinstance(data, dict) and data.get("loggedIn") is True:
+        return True, ""
+    return False, login_hint("claude")
+
+
+def parse_codex_login_status(stdout: str, stderr: str = "", code: int = 0) -> tuple[bool, str]:
+    text = f"{stdout}\n{stderr}"
+    if "logged in" in text.lower():
+        return True, ""
+    if _looks_logged_out(text) or code != 0:
+        return False, login_hint("codex")
+    return False, login_hint("codex")
+
+
+def probe_cli_chair_ready(
+    cmd: str,
+    *,
+    runner: Runner | None = None,
+    use_cache: bool = True,
+) -> tuple[bool, str]:
+    """Cheap auth probe. PATH-only is not enough (Claude --bare taught us that)."""
+    if cmd not in _CHAIR_CMDS:
+        return False, "尚無 chair adapter"
+    if use_cache and cmd in _probe_cache:
+        return _probe_cache[cmd]
+    run = runner or _default_runner
+    if cmd == "claude":
+        try:
+            code, out, err = run(["claude", "auth", "status", "--json"], 4.0)
+        except (OSError, TimeoutError) as exc:
+            result = (False, f"無法檢查登入：{exc}")
+        else:
+            result = parse_claude_auth_status(out or err)
+            if code != 0 and result[0]:
+                result = (False, login_hint("claude"))
+    elif cmd == "codex":
+        try:
+            code, out, err = run(["codex", "login", "status"], 4.0)
+        except (OSError, TimeoutError) as exc:
+            result = (False, f"無法檢查登入：{exc}")
+        else:
+            result = parse_codex_login_status(out, err, code)
+    else:
+        # gemini / grok: no reliable cheap status; PATH + recipe is best we have
+        result = (True, "")
+    if use_cache:
+        _probe_cache[cmd] = result
+    return result
+
+
 def _default_runner(argv: list[str], timeout: float) -> tuple[int, str, str]:
     env = os.environ.copy()
     env.setdefault("NO_COLOR", "1")
@@ -119,13 +206,18 @@ def run_cli_chair(
     try:
         argv = build_cli_chair_command(cmd, prompt, last_message_path=last_path)
         code, stdout, stderr = (runner or _default_runner)(argv, timeout)
+        combined = f"{stdout}\n{stderr}"
+        if _looks_logged_out(combined):
+            raise RuntimeError(login_hint(cmd))
         if code != 0:
-            detail = (stderr or stdout).strip().splitlines()
+            detail = combined.strip().splitlines()
             hint = detail[-1] if detail else f"exit {code}"
             raise RuntimeError(f"{cmd} chair failed: {hint[:200]}")
         if last_path:
             text = Path(last_path).read_text(encoding="utf-8").strip()
             if text:
+                if _looks_logged_out(text):
+                    raise RuntimeError(login_hint(cmd))
                 return text
         text = stdout.strip()
         if not text:

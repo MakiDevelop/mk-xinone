@@ -247,17 +247,22 @@ def _discover_openai() -> list[AgentInfo]:
 
 def _discover_cli() -> list[AgentInfo]:
     """Detect CLI agents. Chair-capable if on PATH and a print/exec recipe exists."""
-    from mk_xinone.backends.cli_chair import has_cli_chair_recipe
+    from mk_xinone.backends.cli_chair import has_cli_chair_recipe, probe_cli_chair_ready
 
     out: list[AgentInfo] = []
     for cmd, label, aliases in _CLI_TOOLS:
         path = shutil.which(cmd)
-        can_chair = bool(path) and has_cli_chair_recipe(cmd)
+        ready, ready_reason = (False, "not on PATH")
+        if path and has_cli_chair_recipe(cmd):
+            ready, ready_reason = probe_cli_chair_ready(cmd)
+        elif path:
+            ready, ready_reason = False, "尚無 chair adapter（P1）"
+        can_chair = bool(path) and ready
         reason = ""
         if not path:
             reason = "not on PATH"
         elif not can_chair:
-            reason = "尚無 chair adapter（P1）"
+            reason = ready_reason or "尚無 chair adapter（P1）"
         else:
             reason = "chair via CLI print/exec；尚未能入席"
         out.append(

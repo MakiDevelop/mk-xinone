@@ -4,6 +4,8 @@ from mk_xinone.agents import AgentInfo
 from mk_xinone.backends.cli_chair import (
     build_cli_chair_command,
     has_cli_chair_recipe,
+    parse_claude_auth_status,
+    probe_cli_chair_ready,
     run_cli_chair,
 )
 from mk_xinone.chair import ChatState, reply_as_chair
@@ -15,6 +17,47 @@ def test_recipes_cover_four_clis():
     assert has_cli_chair_recipe("gemini")
     assert has_cli_chair_recipe("grok")
     assert not has_cli_chair_recipe("agentx")
+
+
+def test_claude_command_does_not_use_bare():
+    argv = build_cli_chair_command("claude", "hello")
+    assert "--bare" not in argv
+    assert "-p" in argv
+    assert "--permission-mode" in argv
+
+
+def test_parse_claude_auth_logged_in():
+    ok, reason = parse_claude_auth_status('{"loggedIn": true, "email": "a@b.c"}')
+    assert ok is True
+    assert reason == ""
+
+
+def test_parse_claude_auth_logged_out():
+    ok, reason = parse_claude_auth_status('{"loggedIn": false}')
+    assert ok is False
+    assert "claude auth login" in reason
+
+
+def test_run_cli_chair_treats_login_error_as_failure():
+    def fake(argv: list[str], timeout: float) -> tuple[int, str, str]:
+        return 0, "Not logged in · Please run /login", ""
+
+    try:
+        run_cli_chair("claude", "hi", runner=fake)
+    except RuntimeError as exc:
+        assert "claude auth login" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
+def test_probe_claude_uses_auth_status():
+    def fake(argv: list[str], timeout: float) -> tuple[int, str, str]:
+        assert argv[:3] == ["claude", "auth", "status"]
+        return 0, '{"loggedIn": false}', ""
+
+    ok, reason = probe_cli_chair_ready("claude", runner=fake, use_cache=False)
+    assert ok is False
+    assert "claude auth login" in reason
 
 
 def test_codex_command_is_read_only_exec():
