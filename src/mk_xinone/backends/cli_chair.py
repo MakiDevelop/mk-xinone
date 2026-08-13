@@ -29,10 +29,54 @@ def has_cli_chair_recipe(cmd: str) -> bool:
     return cmd in _CHAIR_CMDS
 
 
+_MEMORY_POLICY = (
+    "記憶只走 AMH（amh latest / amh MCP）。"
+    "禁止 Google Drive、Gmail、workspace-mcp、raw memhall HTTP。"
+    "沒查到 AMH 就說查不到，不要改去外部雲端翻。"
+)
+
+_CHAIR_WORKSPACE_MD = """# xinone chair
+
+你是 mk-xinone 的主席。只回白話。不要自己開會。
+
+## 記憶
+
+- 只查 AMH：`amh latest --ns personal` 或 MCP `amh`
+- 禁止：Google Drive、Gmail、Docs、Sheets、raw memhall HTTP
+- 查不到就說查不到
+
+公司工作可再查 `amh latest --ns project:abd-ai-hub`（不要把公司內容寫進個人 ns）。
+"""
+
+
+def amh_mcp_config_path() -> Path:
+    return Path(__file__).resolve().parent / "amh.mcp.json"
+
+
+def write_chair_workspace(chair_dir: Path) -> Path:
+    """Give each CLI chair a tiny policy workspace (AMH only)."""
+    chair_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md"):
+        path = chair_dir / name
+        if not path.exists():
+            path.write_text(_CHAIR_WORKSPACE_MD, encoding="utf-8")
+    mcp = chair_dir / "amh.mcp.json"
+    src = amh_mcp_config_path()
+    if src.is_file():
+        mcp.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    else:
+        mcp.write_text(
+            '{"mcpServers":{"amh":{"command":"amh","args":["serve"]}}}\n',
+            encoding="utf-8",
+        )
+    return mcp
+
+
 def build_chair_prompt(label: str, user_text: str, history_blob: str) -> str:
     return (
         f"你是 mk-xinone 的主席（{label}）。\n"
-        "只回使用者看的白話。不要 JSON、不要 markdown 圍欄、不要開會、不要呼叫工具。\n"
+        "只回使用者看的白話。不要 JSON、不要 markdown 圍欄、不要自己開會。\n"
+        f"{_MEMORY_POLICY}\n"
         f"最近對話：\n{history_blob or '（無）'}\n\n"
         f"使用者現在說：\n{user_text.strip()}\n"
     )
@@ -45,24 +89,24 @@ def build_cli_chair_command(
     last_message_path: str | None = None,
     continue_session: bool = False,
     session_id: str | None = None,
+    mcp_config: str | None = None,
 ) -> list[str]:
     if cmd == "claude":
-        # --safe-mode keeps OAuth but skips CLAUDE.md / hooks / skills.
-        # Do not use --bare (ignores keychain) or --no-session-persistence
-        # (forces a cold start every turn).
+        # Isolate from user MCP (Drive/Gmail). AMH only via --mcp-config.
+        # Do not use --bare (ignores keychain) or --safe-mode (kills MCP).
         argv = [
             "claude",
             "-p",
-            "--tools",
-            "",
             "--output-format",
             "text",
             "--permission-mode",
             "plan",
-            "--safe-mode",
             "--effort",
             "low",
             "--disable-slash-commands",
+            "--strict-mcp-config",
+            "--mcp-config",
+            mcp_config or str(amh_mcp_config_path()),
         ]
         if continue_session and session_id:
             argv.extend(["--resume", session_id])
@@ -106,6 +150,8 @@ def build_cli_chair_command(
             "plan",
             "-o",
             "text",
+            "--allowed-mcp-server-names",
+            "amh",
         ]
         if continue_session:
             argv.extend(["--resume", "latest"])
@@ -146,6 +192,7 @@ def bind_cli_workspace(
     root = work_dir or tempfile.mkdtemp(prefix="xinone-chair-")
     chair_dir = Path(root) / cmd
     chair_dir.mkdir(parents=True, exist_ok=True)
+    write_chair_workspace(chair_dir)
     if prev_cmd == cmd and prev_session_id:
         return root, True, prev_session_id, cmd
     return root, False, new_cli_session_id(), cmd
@@ -269,12 +316,18 @@ def run_cli_chair(
         last_path = tmp.name
         tmp.close()
     try:
+        mcp_config = None
+        if cwd:
+            cand = Path(cwd) / "amh.mcp.json"
+            if cand.is_file():
+                mcp_config = str(cand)
         argv = build_cli_chair_command(
             cmd,
             prompt,
             last_message_path=last_path,
             continue_session=continue_session,
             session_id=session_id,
+            mcp_config=mcp_config,
         )
 
         def _run(run_argv: list[str], run_timeout: float) -> tuple[int, str, str]:

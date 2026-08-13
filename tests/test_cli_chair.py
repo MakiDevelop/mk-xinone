@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from mk_xinone.agents import AgentInfo
 from mk_xinone.backends.cli_chair import (
+    build_chair_prompt,
     build_cli_chair_command,
     has_cli_chair_recipe,
     parse_claude_auth_status,
@@ -23,7 +24,10 @@ def test_claude_command_does_not_use_bare():
     argv = build_cli_chair_command("claude", "hello", session_id="11111111-1111-1111-1111-111111111111")
     assert "--bare" not in argv
     assert "--no-session-persistence" not in argv
-    assert "--safe-mode" in argv
+    assert "--safe-mode" not in argv
+    assert "--tools" not in argv
+    assert "--strict-mcp-config" in argv
+    assert "--mcp-config" in argv
     assert "--effort" in argv
     assert "--session-id" in argv
     assert "-p" in argv
@@ -40,6 +44,12 @@ def test_claude_continue_uses_resume():
     assert "--resume" in again
     assert sid in again
     assert "--no-session-persistence" not in again
+
+
+def test_chair_prompt_requires_amh_not_google():
+    text = build_chair_prompt("Claude", "上次做到哪", "")
+    assert "AMH" in text
+    assert "Gmail" in text or "Google Drive" in text
 
 
 def test_parse_claude_auth_logged_in():

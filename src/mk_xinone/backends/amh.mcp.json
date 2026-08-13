@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "amh": {
+      "command": "amh",
+      "args": ["serve"]
+    }
+  }
+}

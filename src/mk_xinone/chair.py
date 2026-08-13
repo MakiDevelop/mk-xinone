@@ -379,7 +379,11 @@ def _reset_cli_session(state: ChatState) -> None:
     state.chair_warmed_id = None
 
 
-_WARMUP_PROMPT = "你是 mk-xinone 的主席。之後只回白話，不要開會、不要呼叫工具。現在只回：OK"
+_WARMUP_PROMPT = (
+    "你是 mk-xinone 的主席。之後只回白話，不要自己開會。"
+    "記憶只走 AMH，不要用 Google Drive / Gmail。"
+    "現在只回：OK"
+)
 
 
 def warmup_chair(
