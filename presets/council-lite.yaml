@@ -1,7 +1,8 @@
-# Default 3-seat council — strangers / 5-minute path
+# Default council — strangers / 5-minute path
+# A4: synthesizer is an explicit seat (not a hidden chair)
 id: council-lite
 name: Council Lite
-description: Architect + Analyst + Engineer，再綜合。預設入口。
+description: Architect + Analyst + Engineer + 顯性 Synthesizer。預設入口。
 seats:
   - id: architect
     role: Architect
@@ -12,6 +13,10 @@ seats:
   - id: engineer
     role: Engineer
     mission: 可不可做、怎麼驗、實作風險
+  - id: synthesizer
+    role: Synthesizer
+    mission: 綜合各席結構化產出；標共識／分歧／判決；不得發明未出現的事實
+    kind: synthesizer
 synthesis: true
 harness:
   wall_max_retries: 2

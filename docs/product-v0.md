@@ -22,23 +22,29 @@
 | P2 | 分歧圖、完整 terminal/log |
 | — | 雲端帳號、Herdr 式 agent farm：**非目標** |
 
-## Harness（使用者無感，系統必做）
+## Harness（使用者無感；M1 硬化）
+
+目標行為（**enforcement = M1**；M0 為 planned/partial）：
 
 - Wall：同錯 2 次 → 停手 + 白話說明  
 - Done-gate：宣稱完成前要有可檢查結果  
 - No self-accept：dual-review 的 reviewer 不可是 executor  
-- 高風險操作需人確認（寫檔／push／刪除 — runtime 接線後）  
+- 顯性 synthesizer 席（非暗箱綜合）  
 - 每輪寫入 `sessions/<id>/`  
 - 撞牆時可附 system-gap 一行（可摺疊）
 
-## v0 範圍
+## 範圍
 
 | 做 | 不做 |
 |----|------|
-| Session 目錄契約 + demo | 完整 Web UI |
+| Session 目錄契約 + demo | Web UI（v1） |
 | Preset YAML + CLI | 真七供應商並跑 |
-| Mock fan-out + synthesis 骨架 | 綁死家裡 lab 路徑 |
-| 文件對齊 agentX / mk-agentos | rebrand 既有 repo |
+| M1：OpenAI-compatible vertical slice | 深綁 agentX / kit |
+| Mock 保留且浮水印 | 公司 preset 進 public |
+
+## Council ratify
+
+2026-08-13：A1–A7 全部通過。施工單見 `docs/NEXT.md`。
 
 ## 成功指標（產品）
 

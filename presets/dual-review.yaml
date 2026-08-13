@@ -9,6 +9,10 @@ seats:
   - id: reviewer
     role: Reviewer
     mission: 獨立審查；輸出 VERDICT PASS|FAIL|PASS_WITH_NITS + evidence
+  - id: synthesizer
+    role: Synthesizer
+    mission: 僅在 reviewer 可接受時整理判決卡；不得覆蓋 FAIL
+    kind: synthesizer
 synthesis: true
 harness:
   wall_max_retries: 2

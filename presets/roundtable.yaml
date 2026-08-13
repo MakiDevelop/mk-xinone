@@ -15,6 +15,10 @@ seats:
   - id: delivery
     role: Delivery
     mission: 執行節奏、驗證、誰負責
+  - id: synthesizer
+    role: Synthesizer
+    mission: 綜合四席；標共識／分歧／盲點；不得發明事實
+    kind: synthesizer
 synthesis: true
 harness:
   wall_max_retries: 2

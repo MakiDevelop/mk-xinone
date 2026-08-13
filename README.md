@@ -1,6 +1,7 @@
 # mk-xinone
 
-**Chat to run a council. Guardrails included. Sessions stay on disk.**
+**Chat to run a council. Sessions stay on disk.**  
+**Guardrails: planned / partial**（M0 = mock + 契約；M1 = 真 enforcement，見下方能力表）
 
 用**一個對話／一句指令**調度 X 位 Agent，背後帶 Council 式多席與 Harness 護欄。  
 不必懂 edge contract、hook 或 mk-agentos 才能跑完一輪。
@@ -10,22 +11,36 @@
 
 ---
 
+## 能力現況（誠實表）
+
+| 能力 | 狀態 |
+|------|------|
+| 離線 demo session | **yes** |
+| `xinone run` mock 席位 | **yes**（輸出會標 mock） |
+| OpenAI-compatible 真 backend | **M1 in progress** |
+| Done-gate / no_self_accept 硬擋 | **planned → M1** |
+| Web UI | **不做**（v1 = CLI only） |
+
+施工單：[`docs/NEXT.md`](docs/NEXT.md) · 驗收：[`docs/m1-acceptance.md`](docs/m1-acceptance.md)
+
+---
+
 ## 5 分鐘劇本（驗收）
 
 ```bash
-git clone https://github.com/MakiDevelop/mk-xinone.git
+git clone https://github.com/MakiDevelop/mk-xinone.git   # 或本機 path
 cd mk-xinone
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# 離線看 demo（不需 API key）
+# 離線看 demo（不需 API key）— 推薦第一站
 xinone show sessions/demo-repo-council-2026-08-12
 
-# 跑一輪（v0：結構化 mock / 本機可擴真模型）
+# 跑一輪（目前預設 mock；接上 API 後為 real）
 xinone run "用多角度評估 https://github.com/example/hello" --preset council-lite
 ```
 
-成功標準：
+成功標準（產品目標；M1 後對 real run 驗收）：
 
 1. 看到 **席位進度**（誰 running / done）
 2. 得到 **白話結論 + 判決**
@@ -39,9 +54,9 @@ xinone run "用多角度評估 https://github.com/example/hello" --preset counci
 | 是 | 不是 |
 |----|------|
 | 對話調度的 multi-seat council | 多 bot 無結構群聊 |
-| 預設開啟 harness（完成門檻、禁自驗、撞牆） | 黑箱「AI 說做完了」 |
+| Harness **目標**為完成門檻、禁自驗、撞牆（M1 硬化） | 已完整 enforcement 的黑盒（尚未） |
 | 結果落 **本地資料夾** | 雲端帳號產品 |
-| Preset 一鍵（3 席／雙人 review／…） | 要求使用者懂七供應商路由 |
+| Preset 一鍵（3 席 + 顯性 synthesizer／雙人 review／…） | 要求使用者懂七供應商路由 |
 
 進階可展開：席位原文、分歧、log（terminal 投影）。預設只露**對話 + 進度 + 結論**。
 

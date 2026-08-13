@@ -3,34 +3,40 @@
 ## 分層
 
 ```text
-[ Chat UI / xinone CLI ]     ← 使用者只碰這層（本 repo 產品臉）
+[ xinone CLI ]                 ← 使用者只碰這層（v1 無 Web）
          │
-[ Orchestrator + Presets ]   ← 一句話 → 選 preset → fan-out → synth
+[ Orchestrator + Presets ]     ← 一句話 → fan-out 工作席 → 顯性 synthesizer
          │
-[ Seat runtimes ]            ← agentX / Claude / Codex / Gemini / mock
+[ Seat runtimes ]              ← mock | OpenAI-compatible（Ollama/雲端）| 可選 agentX
          │
-[ Harness ]                  ← done-gate、no self-accept、wall（對齊 mk-agentos 語意）
+[ Harness ]                    ← done-gate、no self-accept、wall（M1 硬化）
          │
-[ ./sessions/<id>/ ]         ← 本地 SSOT
+[ ./sessions/<id>/ ]           ← 本地 SSOT
 ```
+
+## 顯性 synthesizer（Council A4）
+
+- Preset **必須**宣告 `synthesizer`（或 `chair`）席，不得隱形綜合。  
+- 該席出現在 `meta.seats` 與 `seats/<id>.json`，可單獨指定 model。  
+- 工作席（architect/…）與 synthesizer **上下文隔離**：synthesizer 只吃各席結構化產出，不吃私有 chain-of-thought log。
 
 ## 與相鄰 repo
 
 | 系統 | 本 repo 怎麼用 |
 |------|----------------|
-| **mk-agentos / agent-contract-kit** | 對齊 loop / dual-review / gap 語意；可選依賴，不強迫 clone 整包 OS |
-| **agentX** | 可作 local seat + tools；**不要**把 mk-xinone 做成第二個 Ollama shell |
-| **~/.claude skills（七位／vendor）** | 私人／公司 preset 來源；public 只留通用骨架 |
+| **mk-agentos / agent-contract-kit** | 語意對齊（可選）；**2 週主線不依賴** kit 安裝 |
+| **agentX** | 可作 local seat；**不先深綁**；非本產品本體 |
+| **私人 skills** | 公司 preset 不進 public |
 
-## v0 實作邊界
+## 實作邊界
 
-- Orchestrator 可先 **mock 席位**（固定結構化輸出），契約先穩  
-- 真模型接線後：同一 session 目錄格式不變  
+- M0：mock 席位 + 契約 + demo  
+- M1：OpenAI-compatible vertical slice + harness 硬閘（見 `docs/NEXT.md`）  
 - 不做 persistent multi-PTY farm（非 Herdr）
 
 ## 明確非目標
 
 - 取代 Claude Code / agentX 本體  
-- Board daemon UI  
+- Board daemon UI / Web UI（v1）  
 - 雲端多人即時房間  
 - 使用者手寫 chair-input YAML  

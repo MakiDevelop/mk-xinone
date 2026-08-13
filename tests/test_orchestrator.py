@@ -14,5 +14,7 @@ def test_mock_run(tmp_path: Path):
     assert path == out.resolve()
     bundle = read_session(path)
     assert bundle["meta"]["status"] == "completed"
-    assert len(bundle["seats"]) == 3
+    # council-lite: architect + analyst + engineer + synthesizer
+    assert len(bundle["seats"]) == 4
+    assert "synthesizer" in bundle["seats"]
     assert (path / "verdict.md").is_file()
