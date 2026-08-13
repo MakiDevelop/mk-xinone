@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -106,21 +107,64 @@ def run_council(
     logs_path.mkdir(exist_ok=True)
 
     session_id = out.name
-    mode = "mock" if (backend or "mock").lower().startswith("mock") else "real"
-    if runner is None:
-        runner = get_runner(
-            backend,
-            base_url=base_url,
-            api_key=api_key,
-            model=model,
+    default_backend = backend or "mock"
+    forced_runner = runner  # tests inject a single runner for all seats
+
+    def _runner_for_seat(sdef: dict[str, Any]) -> SeatRunner:
+        if forced_runner is not None:
+            return forced_runner
+        seat_backend = str(sdef.get("backend") or default_backend)
+        seat_model = sdef.get("model") if sdef.get("model") is not None else model
+        seat_base = sdef.get("base_url") if sdef.get("base_url") is not None else base_url
+        seat_key = sdef.get("api_key") if sdef.get("api_key") is not None else api_key
+        if seat_backend in {"ollama"}:
+            seat_backend = "openai"
+            if not seat_base:
+                host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+                seat_base = host + "/v1"
+            if not seat_key:
+                seat_key = "ollama"
+        return get_runner(
+            seat_backend,
+            base_url=seat_base,
+            api_key=seat_key,
+            model=seat_model,
         )
-    backend_name = getattr(runner, "name", backend)
 
     workers_def, synths_def = _split_seats(preset)
     all_defs = list(workers_def) + list(synths_def)
 
-    seat_meta: list[dict[str, str]] = [
-        {"id": str(s["id"]), "role": str(s.get("role", s["id"])), "status": "pending"}
+    # mode: mock only if every seat resolves to mock (or forced mock runner)
+    seat_backends = [
+        str(s.get("backend") or default_backend).lower() for s in all_defs
+    ]
+    if forced_runner is not None:
+        mode = "mock" if getattr(forced_runner, "name", "") == "mock" else "real"
+    elif all(b.startswith("mock") for b in seat_backends):
+        mode = "mock"
+    else:
+        mode = "real"
+
+    backend_name = (
+        "all-hands"
+        if preset.get("all_hands")
+        else getattr(forced_runner, "name", default_backend)
+        if forced_runner
+        else default_backend
+    )
+
+    seat_meta: list[dict[str, Any]] = [
+        {
+            "id": str(s["id"]),
+            "role": str(s.get("role", s["id"])),
+            "status": "pending",
+            **(
+                {"agent": s.get("agent_label") or s.get("agent_id")}
+                if s.get("agent_label") or s.get("agent_id")
+                else {}
+            ),
+            **({"model": s.get("model")} if s.get("model") else {}),
+        }
         for s in all_defs
     ]
 
@@ -137,6 +181,9 @@ def run_council(
             "orchestrator": backend_name,
             "backend": backend_name,
         }
+        if preset.get("all_hands"):
+            m["all_hands"] = True
+            m["agent_count"] = len(workers_def)
         m.update(extra)
         return m
 
@@ -173,14 +220,18 @@ def run_council(
         last_err_key = ""
         same_err_streak = 0
 
+        seat_runner = _runner_for_seat(sdef)
+        agent_label = sdef.get("agent_label") or sdef.get("model") or ""
+        agent_bit = f" @{agent_label}" if agent_label else ""
+
         for attempt in range(1, max_attempts + 1):
             _set_status(sid, "running")
             write_json(out / "meta.json", _meta("running"))
             # Only show attempt counter on retries (first try stays clean)
             suffix = f" retry {attempt}/{max_attempts}" if attempt > 1 else ""
-            _emit(on_progress, f"seat {role} ({sid}) running…{suffix}")
+            _emit(on_progress, f"seat {role} ({sid}){agent_bit} running…{suffix}")
 
-            result = runner.run_seat(
+            result = seat_runner.run_seat(
                 SeatRequest(
                     goal=goal,
                     seat_id=sid,

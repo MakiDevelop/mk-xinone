@@ -49,7 +49,10 @@ def _mock_chair_decide(user_text: str, force_convene: bool) -> ChairDecision:
     if force_convene:
         return ChairDecision(
             action="convene",
-            message="好，我召集各席開會。其它席次現在才會發言。",
+            message=(
+                "好，我召集目前偵測到的可用 Agent 全員開會。"
+                "（主席以外各席現在才會發言。）"
+            ),
             goal=text,
             reason="user forced /council",
         )
@@ -68,8 +71,8 @@ def _mock_chair_decide(user_text: str, force_convene: bool) -> ChairDecision:
         return ChairDecision(
             action="convene",
             message=(
-                "這題適合多席審議。我現在召集 Architect / Analyst / Engineer "
-                "（必要時 Synthesizer），其它時候他們不會插話。"
+                "這題適合多席審議。我現在依「可用 Agent 偵測」召集全員開會"
+                "（角色會自動分配），閒聊時他們不會插話。"
             ),
             goal=text,
             reason="convene heuristics",

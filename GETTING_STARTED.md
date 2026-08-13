@@ -53,9 +53,12 @@ xinone run "評估本地 session SSOT" --preset council-lite --backend ollama --
 | `xinone run "..." [--backend mock\|openai\|ollama]` | 開一輪 council |
 | `xinone show <session_dir>\|demo` | 讀本地 session（`--verbose` 全文） |
 | `xinone doctor [--probe]` | 檢查目錄／demo／API env |
+| `xinone agents` | 偵測目前可用 Agent（runnable 會進 all-hands） |
 | `xinone chat [--backend …]` | 跟**主席**對話；其它席預設不發言 |
-| `xinone chat` 內 `/council <目標>` | 強制多席開會 |
-| `xinone run "…"` | 直接多席（略過主席閘門） |
+| `xinone chat` 內 `/council <目標>` | 開會；**預設全員**（有真實 agent 時） |
+| `xinone chat` 內 `/agents` | 同 `xinone agents` |
+| `xinone run "…"` | 直接開會（有真實 agent 時預設全員） |
+| `xinone run … --no-all-agents` | 改用固定 `--preset` |
 
 ## 給同事
 

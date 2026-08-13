@@ -11,6 +11,11 @@ import urllib.request
 from pathlib import Path
 
 from mk_xinone import __version__
+from mk_xinone.agents import (
+    build_all_hands_preset,
+    discover_agents,
+    format_agents_table,
+)
 from mk_xinone.backends.openai_compatible import resolve_openai_settings
 from mk_xinone.chair import ChatState, ChatTurn, decide_chair
 from mk_xinone.orchestrator import run_council
@@ -29,6 +34,26 @@ def cmd_list_presets(_: argparse.Namespace) -> int:
         if r["description"]:
             print(f"  {r['description']}")
     return 0
+
+
+def cmd_agents(_: argparse.Namespace) -> int:
+    disc = discover_agents()
+    sys.stdout.write(format_agents_table(disc))
+    return 0 if disc.runnable else 1
+
+
+def _resolve_council_preset(args: argparse.Namespace) -> tuple[dict, object]:
+    """
+    Default: if any real runnable agents exist → all-hands (全員加入).
+    Only mock available, or --no-all-agents → fixed preset (multi-role mock).
+    """
+    disc = discover_agents()
+    no_all = getattr(args, "no_all_agents", False)
+    real = [a for a in disc.runnable if a.kind != "mock"]
+    if not no_all and real:
+        preset = build_all_hands_preset(disc)
+        return preset, disc
+    return load_preset(args.preset), disc
 
 
 def _resolve_session_path(raw: str) -> Path:
@@ -98,7 +123,7 @@ def _backend_kwargs(
 
 def cmd_run(args: argparse.Namespace) -> int:
     try:
-        preset = load_preset(args.preset)
+        preset, disc = _resolve_council_preset(args)
     except (FileNotFoundError, ValueError) as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -111,12 +136,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"… {msg}", flush=True)
 
     run_backend, base_url, api_key, model = _backend_kwargs(args.backend, args)
+    # all-hands seats carry their own backend/model; default only fills gaps
+    if preset.get("all_hands"):
+        print(f"agents:  {disc.summary_line()} → all-hands ({len(preset.get('seats', []))} seats)")
+        run_backend = "openai"  # per-seat overrides; ignore pure mock default
 
     try:
         session_dir = run_council(
             goal=args.goal,
             preset=preset,
-            backend=run_backend,
+            backend=run_backend if not preset.get("all_hands") else "mock",
             out_dir=out,
             sessions_root=sessions_dir(),
             force=args.force,
@@ -139,9 +168,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_chat(args: argparse.Namespace) -> int:
     """Chair-first REPL: only Chair speaks unless a council is convened."""
+    disc0 = discover_agents()
     print("mk-xinone chat — 你跟「主席」對話；其它席次預設安靜")
     print(f"preset={args.preset}  backend={args.backend}")
-    print("指令: /council <目標>  強制開會")
+    print(f"agents: {disc0.summary_line()}（開會時預設全員加入）")
+    print("指令: /council <目標>  強制開會（全員）")
+    print("      /agents  列出可用 Agent")
     print("      /preset <id>  /backend mock|openai|ollama  /verbose  /quit")
     print()
 
@@ -183,7 +215,11 @@ def cmd_chat(args: argparse.Namespace) -> int:
             continue
         if line in {"/help", "help", "?"}:
             print("預設只跟主席聊。其它席次不會發言。")
-            print("/council <目標> 才開會；/preset /backend /verbose /quit")
+            print("/council <目標> 開會（偵測到的 runnable agents 全員加入）")
+            print("/agents 列出 Agent；/preset /backend /verbose /quit")
+            continue
+        if line in {"/agents", "/agent"}:
+            sys.stdout.write(format_agents_table(discover_agents()))
             continue
 
         force_convene = False
@@ -226,16 +262,28 @@ def cmd_chat(args: argparse.Namespace) -> int:
             last_code = 0
             continue
 
-        # Convene multi-seat — only now other seats speak
+        # Convene multi-seat — only now other seats speak (default: all runnable agents)
         try:
-            preset = load_preset(preset_id)
+            class _Args:
+                pass
+
+            a = _Args()
+            a.preset = preset_id
+            a.no_all_agents = getattr(args, "no_all_agents", False)
+            a.backend = backend
+            preset, disc = _resolve_council_preset(a)  # type: ignore[arg-type]
         except (FileNotFoundError, ValueError) as e:
             print(str(e), file=sys.stderr)
             last_code = 1
             continue
 
         goal = (decision.goal or user_text).strip()
-        print(f"（開會中… preset={preset_id} backend={backend}）")
+        n_seats = len(preset.get("seats") or [])
+        print(
+            f"（開會中… {disc.summary_line()} → "
+            f"{'all-hands' if preset.get('all_hands') else preset.get('id')} "
+            f"{n_seats} seats）"
+        )
 
         def progress(msg: str) -> None:
             print(f"… {msg}", flush=True)
@@ -244,7 +292,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
             session_dir = run_council(
                 goal=goal,
                 preset=preset,
-                backend=run_backend,
+                backend=run_backend if not preset.get("all_hands") else "mock",
                 sessions_root=sessions_dir(),
                 on_progress=progress,
                 base_url=base_url,
@@ -289,6 +337,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     checks.append(("base_url", True, cfg["base_url"]))
     checks.append(("model", True, cfg["model"]))
 
+    disc = discover_agents()
+    checks.append(
+        (
+            "runnable agents",
+            bool(disc.runnable),
+            disc.summary_line(),
+        )
+    )
+
     for name, passed, detail in checks:
         mark = "ok" if passed else "FAIL"
         if not passed:
@@ -316,7 +373,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ok = False
 
     print(f"version: {__version__}")
-    print("tip: chat = 主席陪聊；/council 或明確審議題才開會")
+    print("tip: chat = 主席陪聊；/council 開會預設全員；xinone agents 查看清單")
     return 0 if ok else 1
 
 
@@ -336,14 +393,22 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--verbose", "-v", action="store_true", help="Full verdict.md")
     sp.set_defaults(func=cmd_show)
 
+    sp = sub.add_parser("agents", help="List detected agents (runnable = join all-hands)")
+    sp.set_defaults(func=cmd_agents)
+
     sp = sub.add_parser("run", help="Run a full multi-seat council (no chair gate)")
     sp.add_argument("goal", help="User goal / prompt")
-    sp.add_argument("--preset", default="council-lite", help="Preset id")
+    sp.add_argument("--preset", default="council-lite", help="Fixed preset if --no-all-agents")
     sp.add_argument(
         "--backend",
         default="mock",
         choices=["mock", "openai", "ollama"],
-        help="Seat backend (default: mock)",
+        help="Default backend when not all-hands (default: mock)",
+    )
+    sp.add_argument(
+        "--no-all-agents",
+        action="store_true",
+        help="Do not auto all-hands; use --preset only",
     )
     sp.add_argument("--out", default=None, help="Output session directory")
     sp.add_argument(
@@ -366,6 +431,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--backend",
         default="mock",
         choices=["mock", "openai", "ollama"],
+    )
+    sp.add_argument(
+        "--no-all-agents",
+        action="store_true",
+        help="When convening, use fixed --preset instead of all runnable agents",
     )
     sp.add_argument("--base-url", default=None)
     sp.add_argument("--api-key", default=None)

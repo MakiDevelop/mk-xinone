@@ -173,7 +173,9 @@ def format_session_show(bundle: dict[str, Any], *, verbose: bool = False) -> str
         status = seat.get("status", "?")
         detail = bundle["seats"].get(sid) or {}
         one = detail.get("one_line_verdict", "")
-        lines.append(f"  [{status:8}] {role} ({sid})")
+        agent = seat.get("agent") or seat.get("model") or ""
+        agent_s = f" · {agent}" if agent else ""
+        lines.append(f"  [{status:8}] {role} ({sid}){agent_s}")
         if one and (verbose or status == "done"):
             # default: one line only; verbose later expands more
             short = one if len(one) <= 100 else one[:97] + "..."
