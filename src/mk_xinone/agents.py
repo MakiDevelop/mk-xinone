@@ -246,10 +246,20 @@ def _discover_openai() -> list[AgentInfo]:
 
 
 def _discover_cli() -> list[AgentInfo]:
-    """Detect CLI agents on PATH (informational; not chair-capable until P1 adapter)."""
+    """Detect CLI agents. Chair-capable if on PATH and a print/exec recipe exists."""
+    from mk_xinone.backends.cli_chair import has_cli_chair_recipe
+
     out: list[AgentInfo] = []
     for cmd, label, aliases in _CLI_TOOLS:
         path = shutil.which(cmd)
+        can_chair = bool(path) and has_cli_chair_recipe(cmd)
+        reason = ""
+        if not path:
+            reason = "not on PATH"
+        elif not can_chair:
+            reason = "尚無 chair adapter（P1）"
+        else:
+            reason = "chair via CLI print/exec；尚未能入席"
         out.append(
             AgentInfo(
                 id=f"cli:{cmd}",
@@ -259,8 +269,8 @@ def _discover_cli() -> list[AgentInfo]:
                 runnable=False,  # no in-process seat runner yet
                 detail=path or "not on PATH",
                 aliases=list(aliases),
-                chair_capable=False,
-                chair_unavailable_reason="尚無 chair adapter（P1）",
+                chair_capable=can_chair,
+                chair_unavailable_reason="" if can_chair else reason,
             )
         )
     return out
@@ -288,8 +298,11 @@ def discover_agents(
         agents.extend(_discover_cli())
         cli_up = [a for a in agents if a.kind == "cli" and a.available]
         if cli_up:
+            chairs = [a.label for a in cli_up if a.chair_capable]
+            if chairs:
+                notes.append(f"CLI chair-capable: {', '.join(chairs)}")
             notes.append(
-                f"CLI present but not in-process seats yet: "
+                "CLI 尚不能入席（seat=no）："
                 f"{', '.join(a.label for a in cli_up)}"
             )
 
@@ -333,22 +346,84 @@ def discover_agents(
     return DiscoveryResult(agents=agents, runnable=use, notes=notes)
 
 
+_IDENTITY_KEYS: tuple[str, ...] = (
+    "claude",
+    "codex",
+    "gemini",
+    "grok",
+    "qwen",
+    "gemma",
+    "agy",
+    "mock",
+)
+_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*b\b", re.IGNORECASE)
+
+
+def agent_identity(agent: AgentInfo) -> str:
+    """Stable identity bucket (one seat per identity in all-hands)."""
+    tokens = _agent_tokens(agent)
+    if agent.id == "cli:agentx" or bool(tokens & {"agy", "agentx", "agent x"}):
+        return "agy"
+    for key in _IDENTITY_KEYS:
+        if key == "agy":
+            continue
+        if key in tokens or agent.id == f"cli:{key}":
+            return key
+    if agent.model:
+        return agent.model.split(":")[0].lower()
+    if ":" in agent.id:
+        return agent.id.split(":", 1)[1].split("_")[0].lower()
+    return agent.id
+
+
+def _size_hint(agent: AgentInfo) -> float:
+    blob = f"{agent.model or ''} {agent.id}"
+    match = _SIZE_RE.search(blob)
+    if match:
+        return float(match.group(1))
+    return 50.0
+
+
+def select_identity_roster(
+    agents: Sequence[AgentInfo],
+    *,
+    max_workers: int = 4,
+) -> list[AgentInfo]:
+    """At most one runnable seat per identity; prefer smaller local models."""
+    real = [a for a in agents if a.runnable and a.kind != "mock"]
+    src = real or [a for a in agents if a.runnable]
+    by_id: dict[str, AgentInfo] = {}
+    for agent in src:
+        key = agent_identity(agent)
+        prev = by_id.get(key)
+        if prev is None or _size_hint(agent) < _size_hint(prev):
+            by_id[key] = agent
+    ordered: list[AgentInfo] = []
+    seen: set[str] = set()
+    for key in _IDENTITY_KEYS:
+        if key in by_id:
+            ordered.append(by_id[key])
+            seen.add(key)
+    for key, agent in by_id.items():
+        if key not in seen:
+            ordered.append(agent)
+    return ordered[:max_workers]
+
+
 def build_all_hands_preset(
     discovery: DiscoveryResult | None = None,
     *,
-    max_workers: int = 12,
+    max_workers: int = 4,
     include_synthesizer: bool = True,
     preset_id: str = "all-hands",
+    avoid_agent_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Build a dynamic preset: every runnable agent becomes a worker seat.
-    Roles rotate through Architect/Analyst/… ; last synthesizer uses first agent.
+    Identity-first roster: one seat per identity (no 4× Ollama flood).
+    Roles rotate through Architect/Analyst/… ; synthesizer prefers a non-chair actor.
     """
     disc = discovery or discover_agents()
-    workers_src = list(disc.runnable)
-    # If mock is in runnable alongside reals, drop mock (discover already prefers reals)
-    if any(a.kind != "mock" for a in workers_src):
-        workers_src = [a for a in workers_src if a.kind != "mock"]
+    workers_src = select_identity_roster(disc.runnable, max_workers=max_workers)
 
     if not workers_src:
         workers_src = [
@@ -361,8 +436,6 @@ def build_all_hands_preset(
                 model="mock",
             )
         ]
-
-    workers_src = workers_src[:max_workers]
     seats: list[dict[str, Any]] = []
     for i, agent in enumerate(workers_src):
         role_id, role_name, mission = _ROLE_CYCLE[i % len(_ROLE_CYCLE)]
@@ -390,7 +463,12 @@ def build_all_hands_preset(
         seats.append(seat)
 
     if include_synthesizer and workers_src:
-        lead = workers_src[0]
+        lead = next(
+            (w for w in workers_src if avoid_agent_id and w.id != avoid_agent_id),
+            workers_src[0],
+        )
+        if avoid_agent_id and lead.id == avoid_agent_id and len(workers_src) > 1:
+            lead = workers_src[1]
         seats.append(
             {
                 "id": "synthesizer",
@@ -559,5 +637,5 @@ def format_agents_table(discovery: DiscoveryResult) -> str:
             lines.append(f"  - {n}")
     lines.append("")
     lines.append("columns: detected=status  chair=chair_capable  seat=runnable")
-    lines.append("all-hands: every runnable agent joins as a seat (+ synthesizer)")
+    lines.append("all-hands: one seat per identity (+ synthesizer); CLI chair ≠ seat")
     return "\n".join(lines) + "\n"

@@ -365,6 +365,42 @@ def test_cli_5_open_meeting_asks_goal(monkeypatch, capsys, tmp_path: Path) -> No
     assert "什麼" in out or "?" in out or "？" in out
 
 
+def test_cli_appoint_capable_codex(monkeypatch, capsys, tmp_path: Path) -> None:
+    def stub() -> DiscoveryResult:
+        mock = AgentInfo(
+            id="mock",
+            kind="mock",
+            label="Mock",
+            available=True,
+            runnable=True,
+            aliases=["mock"],
+            chair_capable=True,
+        )
+        codex = AgentInfo(
+            id="cli:codex",
+            kind="cli",
+            label="Codex CLI",
+            available=True,
+            runnable=False,
+            aliases=["codex"],
+            chair_capable=True,
+        )
+        return DiscoveryResult(agents=[mock, codex], runnable=[mock], notes=[])
+
+    monkeypatch.setattr("mk_xinone.cli.discover_agents", stub)
+    monkeypatch.setattr("mk_xinone.cli.sessions_dir", lambda: tmp_path)
+    stream = iter(["讓 Codex 當主席。", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(stream))
+    try:
+        main(["chat", "--backend", "mock", "--no-all-agents"])
+    except SystemExit as exc:
+        assert exc.code in {0, 1, 3}
+    out = capsys.readouterr().out
+    assert "已由 Codex 主持" in out
+    assert "尚未開會" in out
+    assert _session_dirs(tmp_path) == []
+
+
 def test_cli_6_appoint_codex_not_capable_keeps_mock(monkeypatch, capsys, tmp_path: Path) -> None:
     _run_chat(monkeypatch, tmp_path, ["讓 Codex 當主席。"])
     out = capsys.readouterr().out
@@ -418,7 +454,6 @@ def test_cli_startup_prints_chair(monkeypatch, capsys, tmp_path: Path) -> None:
     _run_chat(monkeypatch, tmp_path, [])
     out = capsys.readouterr().out
     assert "主席：" in out
-    assert "讓" in out and "當主席" in out
     assert "/council" not in out.split("人話")[0] if "人話" in out else "/council" not in out
 
 

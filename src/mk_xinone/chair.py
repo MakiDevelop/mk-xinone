@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 
 from mk_xinone.agents import AgentInfo, ResolveResult, resolve_agent_ref
 from mk_xinone.backends import get_runner
+from mk_xinone.backends.cli_chair import (
+    build_chair_prompt,
+    cli_cmd_from_agent_id,
+    run_cli_chair,
+)
 from mk_xinone.backends.openai_compatible import (
     OpenAICompatibleSeatRunner,
     _extract_json_object,
@@ -355,6 +361,55 @@ def apply_chair_change(
             f"仍由 {current_label} 主持。"
         )
     return False, f"找不到「{plan.chair_ref}」。仍由 {current_label} 主持。"
+
+
+def _history_blob(state: ChatState) -> str:
+    return "\n".join(f"{t.role}: {t.content}" for t in state.history[-12:])
+
+
+def reply_as_chair(
+    agent: AgentInfo | None,
+    user_text: str,
+    state: ChatState,
+    *,
+    cli_runner=None,
+) -> ChairDecision:
+    """Reply using the appointed chair's adapter. Fail closed to text, never convene."""
+    if agent is None or agent.kind == "mock" or not agent.chair_capable:
+        return decide_chair(user_text, state, backend="mock")
+
+    if agent.kind == "cli":
+        cmd = cli_cmd_from_agent_id(agent.id)
+        prompt = build_chair_prompt(
+            chair_label_for(agent),
+            user_text,
+            _history_blob(state),
+        )
+        timeout = float(os.environ.get("XINONE_CHAIR_TIMEOUT", "90"))
+        try:
+            text = run_cli_chair(cmd, prompt, timeout=timeout, runner=cli_runner)
+        except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
+            return ChairDecision(
+                action="reply",
+                message=(
+                    f"{chair_label_for(agent)} 這一輪沒回成（{exc}）。"
+                    "沒有開會，也沒有換成別人。"
+                ),
+                reason="cli chair error",
+            )
+        return ChairDecision(action="reply", message=text, reason=f"cli:{cmd}")
+
+    if agent.kind in {"ollama", "openai"}:
+        return decide_chair(
+            user_text,
+            state,
+            backend="openai",
+            base_url=agent.base_url,
+            model=agent.model,
+            api_key="ollama" if agent.kind == "ollama" else None,
+        )
+
+    return decide_chair(user_text, state, backend="mock")
 
 
 def _mock_chair_decide(user_text: str, force_convene: bool) -> ChairDecision:

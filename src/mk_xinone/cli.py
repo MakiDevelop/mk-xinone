@@ -24,10 +24,11 @@ from mk_xinone.chair import (
     ConveneCard,
     apply_chair_change,
     assignment_from_agent,
-    decide_chair,
+    chair_label_for,
     format_convene_card,
     parse_confirm_reply,
     parse_intent,
+    reply_as_chair,
 )
 from mk_xinone.orchestrator import run_council
 from mk_xinone.paths import presets_dir, repo_root, sessions_dir
@@ -62,16 +63,20 @@ def cmd_agents(_: argparse.Namespace) -> int:
     return 0 if disc.runnable else 1
 
 
-def _resolve_council_preset(args: argparse.Namespace) -> tuple[dict, object]:
+def _resolve_council_preset(
+    args: argparse.Namespace,
+    *,
+    avoid_agent_id: str | None = None,
+) -> tuple[dict, object]:
     """
-    Default: if any real runnable agents exist → all-hands (全員加入).
+    Default: if any real runnable agents exist → identity-first all-hands.
     Only mock available, or --no-all-agents → fixed preset (multi-role mock).
     """
     disc = discover_agents()
     no_all = getattr(args, "no_all_agents", False)
     real = [a for a in disc.runnable if a.kind != "mock"]
     if not no_all and real:
-        preset = build_all_hands_preset(disc)
+        preset = build_all_hands_preset(disc, avoid_agent_id=avoid_agent_id)
         return preset, disc
     return load_preset(args.preset), disc
 
@@ -186,6 +191,26 @@ def cmd_run(args: argparse.Namespace) -> int:
     return _print_run_result(session_dir, verbose=args.verbose)
 
 
+def _example_chair_label(agents, current_label: str) -> str | None:
+    seen: list[str] = []
+    for agent in agents:
+        if not agent.chair_capable or agent.kind == "mock":
+            continue
+        label = chair_label_for(agent)
+        if label not in seen:
+            seen.append(label)
+    for label in seen:
+        if label != current_label:
+            return label
+    return None
+
+
+def _agent_for_chair(assignment, agents):
+    if assignment is None:
+        return None
+    return next((a for a in agents if a.id == assignment.agent_id), None)
+
+
 def _chair_prompt(state: ChatState) -> str:
     if state.pending_confirm is not None:
         return "確認> "
@@ -201,7 +226,10 @@ def _print_chair(state: ChatState, message: str) -> None:
 
 
 def _resolve_chat_preset(
-    preset_id: str, args: argparse.Namespace
+    preset_id: str,
+    args: argparse.Namespace,
+    *,
+    avoid_agent_id: str | None = None,
 ) -> tuple[dict, object]:
     class _Args:
         pass
@@ -210,7 +238,7 @@ def _resolve_chat_preset(
     a.preset = preset_id
     a.no_all_agents = getattr(args, "no_all_agents", False)
     a.backend = getattr(args, "backend", "mock")
-    return _resolve_council_preset(a)  # type: ignore[arg-type]
+    return _resolve_council_preset(a, avoid_agent_id=avoid_agent_id)  # type: ignore[arg-type]
 
 
 def _build_confirm_card(
@@ -219,7 +247,11 @@ def _build_confirm_card(
     if state.active_chair is None:
         return None
     try:
-        preset, _disc = _resolve_chat_preset(preset_id, args)
+        preset, _disc = _resolve_chat_preset(
+            preset_id,
+            args,
+            avoid_agent_id=state.active_chair.agent_id,
+        )
     except (FileNotFoundError, ValueError):
         preset = {"id": preset_id, "seats": []}
     n_seats = len(preset.get("seats") or [])
@@ -249,7 +281,11 @@ def _run_confirmed_council(
     if card is None or state.active_chair is None:
         return 0
     try:
-        preset, disc = _resolve_chat_preset(preset_id, args)
+        preset, disc = _resolve_chat_preset(
+            preset_id,
+            args,
+            avoid_agent_id=state.active_chair.agent_id,
+        )
     except (FileNotFoundError, ValueError) as e:
         print(str(e), file=sys.stderr)
         state.pending_confirm = None
@@ -310,13 +346,16 @@ def cmd_chat(args: argparse.Namespace) -> int:
     state = ChatState(default_chair=chair, active_chair=chair)
     if picked.agent.kind == "mock":
         print("目前沒有可主持的真實 agent，由 Mock 擔任主席。")
-    print(f"主席：{chair.label}（可改：讓 Gemini 當主席）")
+    alt = _example_chair_label(disc0.agents, chair.label)
+    hint = f"（可改：讓 {alt} 當主席）" if alt else ""
+    print(f"主席：{chair.label}{hint}")
     if fallback_note:
         print(f"（--chair {preferred} 失敗：{fallback_note}；未靜默假裝已指派）")
     print(f"agents: {disc0.summary_line()}")
     print()
     print("人話例句：")
-    print("  讓 Codex 當主席")
+    if alt:
+        print(f"  讓 {alt} 當主席")
     print("  召集大家開會，評估 …")
     print("  有哪些 agent？誰能當主席？")
     print("  上一場會議怎樣？")
@@ -480,17 +519,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
             last_code = 0
             continue
 
-        _run_backend, base_url, api_key, model = _backend_kwargs(backend, args)
-        chair_backend = "mock" if backend == "mock" else "openai"
-        decision = decide_chair(
-            user_text,
-            state,
-            backend=chair_backend,
-            force_convene=False,
-            base_url=base_url,
-            api_key=api_key,
-            model=model,
-        )
+        live_agents = discover_agents().agents
+        chair_agent = _agent_for_chair(state.active_chair, live_agents)
+        decision = reply_as_chair(chair_agent, user_text, state)
         _print_chair(state, decision.message)
         if verbose and decision.reason:
             print(f"      (reason: {decision.reason})")
