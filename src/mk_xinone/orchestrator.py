@@ -147,6 +147,11 @@ def run_council(
     seat_payloads: dict[str, dict[str, Any]] = {}
     actors: dict[str, str] = {}
     any_failed = False
+    wall_hits: list[dict[str, Any]] = []
+    harness_cfg = preset.get("harness") or {}
+    # wall_max_retries: max attempts per seat (default 2 = try + one retry)
+    max_attempts = int(harness_cfg.get("wall_max_retries") or 2)
+    max_attempts = max(1, min(max_attempts, 5))
 
     def _set_status(sid: str, status: str) -> None:
         for row in seat_meta:
@@ -154,37 +159,93 @@ def run_council(
                 row["status"] = status
                 break
 
-    # --- workers ---
-    for sdef in workers_def:
+    def _run_seat_with_wall(
+        sdef: dict[str, Any],
+        *,
+        kind: str,
+        peer_summaries: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        """Run seat with wall retries. Returns True if seat succeeded."""
+        nonlocal any_failed
         sid = str(sdef["id"])
         role = str(sdef.get("role", sid))
-        _set_status(sid, "running")
-        write_json(out / "meta.json", _meta("running"))
-        _emit(on_progress, f"seat {role} ({sid}) running…")
+        log_chunks: list[str] = []
+        last_err_key = ""
+        same_err_streak = 0
 
-        result = runner.run_seat(
-            SeatRequest(
-                goal=goal,
-                seat_id=sid,
-                role=role,
-                mission=str(sdef.get("mission", "")),
-                kind="worker",
+        for attempt in range(1, max_attempts + 1):
+            _set_status(sid, "running")
+            write_json(out / "meta.json", _meta("running"))
+            suffix = f" attempt {attempt}/{max_attempts}" if max_attempts > 1 else ""
+            _emit(on_progress, f"seat {role} ({sid}) running…{suffix}")
+
+            result = runner.run_seat(
+                SeatRequest(
+                    goal=goal,
+                    seat_id=sid,
+                    role=role,
+                    mission=str(sdef.get("mission", "")),
+                    kind=kind,
+                    peer_summaries=list(peer_summaries or []),
+                )
             )
-        )
-        payload = result.payload
-        actors[sid] = result.actor
-        seat_payloads[sid] = payload
-        write_json(seats_path / f"{sid}.json", payload)
-        write_text(logs_path / f"{sid}.log", redact_secrets(result.log or ""))
+            log_chunks.append(
+                redact_secrets(f"--- attempt {attempt}/{max_attempts} ---\n{result.log or ''}")
+            )
+            actors[sid] = result.actor
+            payload = result.payload
+            seat_payloads[sid] = payload
+            write_json(seats_path / f"{sid}.json", payload)
+            write_text(logs_path / f"{sid}.log", "".join(log_chunks))
 
-        if result.ok and payload.get("status") != "failed":
-            _set_status(sid, "done")
-            _emit(on_progress, f"seat {role} ({sid}) done")
-        else:
-            any_failed = True
-            _set_status(sid, "failed")
-            _emit(on_progress, f"seat {role} ({sid}) FAILED")
+            ok = result.ok and payload.get("status") != "failed"
+            if ok:
+                _set_status(sid, "done")
+                _emit(on_progress, f"seat {role} ({sid}) done")
+                write_json(out / "meta.json", _meta("running"))
+                return True
+
+            err_key = (result.error or payload.get("one_line_verdict") or "failed")[:200]
+            if err_key == last_err_key:
+                same_err_streak += 1
+            else:
+                same_err_streak = 1
+                last_err_key = err_key
+
+            # Wall: same error twice, or exhausted attempts
+            hit_wall = same_err_streak >= 2 or attempt >= max_attempts
+            if hit_wall:
+                any_failed = True
+                _set_status(sid, "failed")
+                wall_hits.append(
+                    {
+                        "seat": sid,
+                        "attempts": attempt,
+                        "error": err_key,
+                        "same_error_streak": same_err_streak,
+                    }
+                )
+                gap = (
+                    f"WALL seat={sid}: same/exhausted failure after {attempt} attempt(s); "
+                    f"error={err_key[:120]}"
+                )
+                _emit(on_progress, f"seat {role} ({sid}) WALL — {gap}")
+                write_json(out / "meta.json", _meta("running"))
+                return False
+
+            _emit(
+                on_progress,
+                f"seat {role} ({sid}) failed attempt {attempt}, retrying…",
+            )
+
+        any_failed = True
+        _set_status(sid, "failed")
         write_json(out / "meta.json", _meta("running"))
+        return False
+
+    # --- workers ---
+    for sdef in workers_def:
+        _run_seat_with_wall(sdef, kind="worker")
 
     # --- synthesizer (explicit) ---
     synth_payload: dict[str, Any] | None = None
@@ -202,37 +263,11 @@ def run_council(
     ]
 
     for sdef in synths_def:
-        sid = str(sdef["id"])
-        role = str(sdef.get("role", sid))
-        _set_status(sid, "running")
-        write_json(out / "meta.json", _meta("running"))
-        _emit(on_progress, f"seat {role} ({sid}) running…")
-
-        result = runner.run_seat(
-            SeatRequest(
-                goal=goal,
-                seat_id=sid,
-                role=role,
-                mission=str(sdef.get("mission", "")),
-                kind="synthesizer",
-                peer_summaries=peer_summaries,
-            )
+        ok = _run_seat_with_wall(
+            sdef, kind="synthesizer", peer_summaries=peer_summaries
         )
-        payload = result.payload
-        actors[sid] = result.actor
-        seat_payloads[sid] = payload
-        synth_payload = payload
-        write_json(seats_path / f"{sid}.json", payload)
-        write_text(logs_path / f"{sid}.log", redact_secrets(result.log or ""))
-
-        if result.ok and payload.get("status") != "failed":
-            _set_status(sid, "done")
-            _emit(on_progress, f"seat {role} ({sid}) done")
-        else:
-            any_failed = True
-            _set_status(sid, "failed")
-            _emit(on_progress, f"seat {role} ({sid}) FAILED")
-        write_json(out / "meta.json", _meta("running"))
+        if ok:
+            synth_payload = seat_payloads.get(str(sdef["id"]))
 
     synthesis = _build_synthesis_from_seats(
         [seat_payloads[s["id"]] for s in workers_def if s["id"] in seat_payloads],
@@ -285,6 +320,12 @@ def run_council(
     extra: dict[str, Any] = {}
     if harness_note:
         extra["harness"] = {"ok": final_status == "completed", "detail": harness_note}
+    if wall_hits:
+        extra["wall"] = wall_hits
+        gap_line = "; ".join(
+            f"{h['seat']}×{h['attempts']}:{str(h.get('error', ''))[:60]}" for h in wall_hits
+        )
+        extra["system_gap"] = f"wall → retry exhausted → review backend/prompt ({gap_line})"
 
     write_json(out / "meta.json", _meta(final_status, **extra))
 
@@ -305,6 +346,11 @@ def run_council(
         ]
     if harness_note:
         verdict_lines += [f"> Harness: {harness_note}", ""]
+    if wall_hits:
+        verdict_lines += [
+            f"> Wall: {len(wall_hits)} seat(s) exhausted retries (max={max_attempts})",
+            "",
+        ]
     verdict_lines += ["## 各席", ""]
     for sdef in all_defs:
         sid = str(sdef["id"])

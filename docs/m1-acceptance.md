@@ -25,7 +25,7 @@
 | real backend | no | yes |
 | done-gate enforced | no | yes |
 | no_self_accept enforced | no | yes |
-| wall (2×) | planned | yes（至少 dual-review） |
+| wall (2×) | planned | **yes**（每席 max attempts + 同錯連撞） |
 | Web UI | no | **不做** |
 
 ## 5 人陌生人測試（可選加強，不阻塞工程合併）

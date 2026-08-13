@@ -87,30 +87,124 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"run failed: {e}", file=sys.stderr)
         return 1
 
+    print()
+    print(f"preset:  {preset.get('id')}")
+    return _print_run_result(session_dir, verbose=args.verbose)
+
+
+def _print_run_result(session_dir: Path, *, verbose: bool) -> int:
     try:
         bundle = read_session(session_dir)
     except FileNotFoundError as e:
         print(str(e), file=sys.stderr)
         return 1
-
     meta = bundle["meta"]
     status = meta.get("status", "?")
     mode = meta.get("mode", "?")
     print()
-    print(f"preset:  {preset.get('id')}")
     print(f"status:  {status}  mode={mode}")
     print(f"session: {session_dir}")
     if mode == "mock":
         print()
         print("*** MOCK 浮水印：非真實多模型。demo：xinone show demo ***")
     print()
-    sys.stdout.write(format_session_show(bundle, verbose=args.verbose))
-
+    sys.stdout.write(format_session_show(bundle, verbose=verbose))
     if status == "completed":
         return 0
     if status == "blocked":
         return 3
     return 1
+
+
+def cmd_chat(args: argparse.Namespace) -> int:
+    """Thin REPL: one goal → council → show; loop until quit."""
+    print("mk-xinone chat — 輸入目標開一輪 council；/quit 離開")
+    print(f"preset={args.preset}  backend={args.backend}")
+    print("指令: /preset <id>  /backend mock|openai|ollama  /verbose  /quit")
+    print()
+
+    preset_id = args.preset
+    backend = args.backend
+    verbose = args.verbose
+    last_code = 0
+
+    while True:
+        try:
+            line = input("xinone> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not line:
+            continue
+        if line in {"/quit", "/exit", "/q", "quit", "exit"}:
+            break
+        if line.startswith("/preset"):
+            parts = line.split(maxsplit=1)
+            if len(parts) == 2 and parts[1].strip():
+                preset_id = parts[1].strip()
+                print(f"preset → {preset_id}")
+            else:
+                print(f"current preset: {preset_id}")
+            continue
+        if line.startswith("/backend"):
+            parts = line.split(maxsplit=1)
+            if len(parts) == 2 and parts[1].strip() in {"mock", "openai", "ollama"}:
+                backend = parts[1].strip()
+                print(f"backend → {backend}")
+            else:
+                print(f"current backend: {backend} (mock|openai|ollama)")
+            continue
+        if line in {"/verbose", "/v"}:
+            verbose = not verbose
+            print(f"verbose → {verbose}")
+            continue
+        if line in {"/help", "help", "?"}:
+            print("輸入任意目標文字即 run；/preset /backend /verbose /quit")
+            continue
+
+        # treat line as goal
+        try:
+            preset = load_preset(preset_id)
+        except (FileNotFoundError, ValueError) as e:
+            print(str(e), file=sys.stderr)
+            last_code = 1
+            continue
+
+        # apply ollama defaults like main()
+        base_url, api_key, model = args.base_url, args.api_key, args.model
+        run_backend = backend
+        if backend == "ollama":
+            run_backend = "openai"
+            if not base_url and not os.environ.get("XINONE_BASE_URL"):
+                base_url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434") + "/v1"
+            if not model and not os.environ.get("XINONE_MODEL"):
+                model = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+            if api_key is None and not os.environ.get("XINONE_API_KEY"):
+                api_key = os.environ.get("OPENAI_API_KEY", "ollama")
+
+        def progress(msg: str) -> None:
+            print(f"… {msg}", flush=True)
+
+        try:
+            session_dir = run_council(
+                goal=line,
+                preset=preset,
+                backend=run_backend,
+                sessions_root=sessions_dir(),
+                on_progress=progress,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+            )
+        except (OSError, ValueError, RuntimeError, FileExistsError) as e:
+            print(f"run failed: {e}", file=sys.stderr)
+            last_code = 1
+            continue
+
+        last_code = _print_run_result(session_dir, verbose=verbose)
+        print()
+
+    return last_code
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -206,6 +300,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--verbose", "-v", action="store_true")
     sp.set_defaults(func=cmd_run)
 
+    sp = sub.add_parser("chat", help="Thin REPL: type a goal, run council, loop")
+    sp.add_argument("--preset", default="council-lite")
+    sp.add_argument(
+        "--backend",
+        default="mock",
+        choices=["mock", "openai", "ollama"],
+    )
+    sp.add_argument("--base-url", default=None)
+    sp.add_argument("--api-key", default=None)
+    sp.add_argument("--model", default=None)
+    sp.add_argument("--verbose", "-v", action="store_true")
+    sp.set_defaults(func=cmd_chat)
+
     sp = sub.add_parser("doctor", help="Check install / demo / API env")
     sp.add_argument(
         "--probe",
@@ -217,20 +324,25 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _apply_ollama_defaults(args: argparse.Namespace) -> None:
+    if getattr(args, "backend", None) != "ollama":
+        return
+    # keep backend label for chat display; run path maps inside handlers
+    if getattr(args, "func", None) is cmd_chat:
+        return
+    args.backend = "openai"
+    if not args.base_url and not os.environ.get("XINONE_BASE_URL"):
+        args.base_url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434") + "/v1"
+    if not args.model and not os.environ.get("XINONE_MODEL"):
+        args.model = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+    if args.api_key is None and not os.environ.get("XINONE_API_KEY"):
+        args.api_key = os.environ.get("OPENAI_API_KEY", "ollama")
+
+
 def main(argv: list[str] | None = None) -> None:
-    # Map ollama alias to openai runner with local default if unset
     parser = build_parser()
     args = parser.parse_args(argv)
-    if getattr(args, "backend", None) == "ollama":
-        args.backend = "openai"
-        if not args.base_url and not os.environ.get("XINONE_BASE_URL"):
-            args.base_url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434") + "/v1"
-            if not args.base_url.endswith("/v1"):
-                pass
-        if not args.model and not os.environ.get("XINONE_MODEL"):
-            args.model = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
-        if args.api_key is None and not os.environ.get("XINONE_API_KEY"):
-            args.api_key = os.environ.get("OPENAI_API_KEY", "ollama")
+    _apply_ollama_defaults(args)
     code = args.func(args)
     raise SystemExit(code)
 

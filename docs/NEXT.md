@@ -33,12 +33,14 @@ OpenAI-compatible 真 backend → `council-lite` 真跑 → 席位進度可見 �
 | 6 | CLI 進度 + 濃縮輸出 | 進度行；mock 浮水印；`--verbose` | **done** |
 | 7 | 顯性 synthesizer + doctor | preset 宣告；doctor + `--probe` | **done** |
 
-### 可選 follow-up（非阻塞）
+### Follow-up（逐項）
 
-- `xinone chat` 薄 REPL  
-- 5 人陌生人實測記錄  
-- wall 2× retry 迴圈（目前 gate 有、自動重試未做）  
-- dual-review 真模型 E2E 錄影  
+| # | 項目 | 狀態 |
+|---|------|------|
+| F1 | `xinone chat` 薄 REPL | **done** |
+| F2 | wall 2× 自動重試 | **done** |
+| F3 | 五分鐘驗收紀錄 `docs/validation/m1-five-minute-test.md` | **done**（自測 + 模板） |
+| F4 | GitHub public | 見當次 commit / gh |
 
 ---
 

@@ -19,6 +19,8 @@
 | `xinone run` mock 席位 | **yes**（浮水印） |
 | OpenAI-compatible / Ollama 真 backend | **yes**（`--backend openai\|ollama`） |
 | Done-gate / no_self_accept 硬擋 | **yes**（未過不得 `completed`） |
+| Wall 2× 重試 | **yes** |
+| `xinone chat` REPL | **yes** |
 | Session 不覆寫 / 原子寫 / redact | **yes** |
 | Web UI | **不做**（v1 = CLI only） |
 
@@ -42,6 +44,9 @@ xinone run "用多角度評估 https://github.com/example/hello" --preset counci
 
 # 真跑（需 API 或本機 Ollama）
 # xinone run "..." --preset council-lite --backend ollama --model qwen3:8b
+
+# 對話 REPL
+# xinone chat --backend ollama
 ```
 
 成功標準（產品目標；M1 後對 real run 驗收）：
