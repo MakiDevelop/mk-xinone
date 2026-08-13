@@ -1,7 +1,6 @@
-# 2026-08-13 — NL Chair P0+P1 日常可用
+# 2026-08-13 — NL Chair 收工
 
-- PRD: `docs/prd-nl-chair-convenience-v1.md`
-- P0：IntentPlan / 確認卡 / 啟動指派主席
-- P1：CLI chair adapter（Claude/Codex/Gemini/Grok）+ all-hands 身份制
-- PATH：`~/.local/bin/xinone` → repo venv
-- 驗收：pytest 66；`/tmp` 開 xinone，讓 Codex 當主席成功；all-hands 卡 3 席
+- Repo：`5fbe576` 已 push
+- 交接包：`~/Documents/agent-council/2026-08-13-xinone-daily-driver-handoff/`
+- 可用：人話開會、確認卡、CLI 主席續聊、點名 warmup、AMH-only 記憶政策
+- 下次：手測「上次做到哪」是否真打 AMH；CLI 入席未做
