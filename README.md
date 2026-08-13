@@ -20,7 +20,7 @@
 | OpenAI-compatible / Ollama 真 backend | **yes**（`--backend openai\|ollama`） |
 | Done-gate / no_self_accept 硬擋 | **yes**（未過不得 `completed`） |
 | Wall 2× 重試 | **yes** |
-| `xinone chat` REPL | **yes** |
+| `xinone chat` REPL | **yes**（人話開會 + 確認卡 + 啟動指派主席） |
 | Session 不覆寫 / 原子寫 / redact | **yes** |
 | Web UI | **不做**（v1 = CLI only） |
 
@@ -48,9 +48,11 @@ xinone run "用多角度評估 https://github.com/example/hello" --preset counci
 # 看有哪些 Agent 可用（開會預設全員加入）
 xinone agents
 
-# 對話 REPL（預設只跟主席聊；其它席安靜）
+# 對話 REPL（啟動時指派主席；人話開會，先出確認卡）
 # xinone chat --backend mock
-# 開會：/council <目標>  → 偵測到的 runnable agents 全員入席
+# 讓 Codex 當主席
+# 召集大家開會，評估本地 session 當 SSOT
+# （slash /council 仍可用，只是逃生口）
 ```
 
 成功標準（產品目標；M1 後對 real run 驗收）：

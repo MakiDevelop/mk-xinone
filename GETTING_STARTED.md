@@ -54,9 +54,10 @@ xinone run "評估本地 session SSOT" --preset council-lite --backend ollama --
 | `xinone show <session_dir>\|demo` | 讀本地 session（`--verbose` 全文） |
 | `xinone doctor [--probe]` | 檢查目錄／demo／API env |
 | `xinone agents` | 偵測目前可用 Agent（runnable 會進 all-hands） |
-| `xinone chat [--backend …]` | 跟**主席**對話；其它席預設不發言 |
-| `xinone chat` 內 `/council <目標>` | 開會；**預設全員**（有真實 agent 時） |
-| `xinone chat` 內 `/agents` | 同 `xinone agents` |
+| `xinone` / `xinone chat` | 啟動時指派主席；人話開會（先確認卡） |
+| `xinone chat` 內「召集大家開會，評估 …」 | 確認卡 → Enter 才開會 |
+| `xinone chat` 內「讓 Codex 當主席」 | 只改主席，不開會 |
+| `xinone chat` 內 `/council <目標>` | 逃生口；同樣先出確認卡 |
 | `xinone run "…"` | 直接開會（有真實 agent 時預設全員） |
 | `xinone run … --no-all-agents` | 改用固定 `--preset` |
 

@@ -56,3 +56,15 @@ OpenAI-compatible 真 backend → `council-lite` 真跑 → 席位進度可見 �
 ## 歷史草案（作廢為施工順序）
 
 舊 M1/M2/M3 三段鬆散 milestone **已由 vertical slice 取代**。
+
+---
+
+## 後續主線（Maki 2026-08-13）
+
+**NL 開會 + 可指派主席 + 確認卡** — 施工 SSOT：
+
+→ [`docs/prd-nl-chair-convenience-v1.md`](prd-nl-chair-convenience-v1.md)
+
+P0 已實作（2026-08-13）：NL convene + 啟動指派主席 + 確認卡。驗收：`pytest` 全綠；§10 10 句 + 負向。P1：CLI chair adapter、all-hands 身份優先。
+
+Council 原始討論：`~/Documents/agent-council/2026-08-13-xinone-nl-chair-ux/`
