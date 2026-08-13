@@ -40,7 +40,7 @@ OpenAI-compatible 真 backend → `council-lite` 真跑 → 席位進度可見 �
 | F1 | `xinone chat` 薄 REPL | **done** |
 | F2 | wall 2× 自動重試 | **done** |
 | F3 | 五分鐘驗收紀錄 `docs/validation/m1-five-minute-test.md` | **done**（自測 + 模板） |
-| F4 | GitHub public | 見當次 commit / gh |
+| F4 | GitHub public | **done**（2026-08-13） |
 
 ---
 
