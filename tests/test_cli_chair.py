@@ -8,7 +8,7 @@ from mk_xinone.backends.cli_chair import (
     probe_cli_chair_ready,
     run_cli_chair,
 )
-from mk_xinone.chair import ChatState, reply_as_chair
+from mk_xinone.chair import ChatState, reply_as_chair, warmup_chair
 
 
 def test_recipes_cover_four_clis():
@@ -122,6 +122,51 @@ def test_reply_as_chair_cli_does_not_convene():
     d = reply_as_chair(agent, "嗨", ChatState(), cli_runner=fake)
     assert d.action == "reply"
     assert "尚未開會" in d.message
+
+
+def test_warmup_then_reply_is_resume_for_every_cli():
+    for cmd, label in (
+        ("claude", "Claude Code CLI"),
+        ("codex", "Codex CLI"),
+        ("gemini", "Gemini CLI"),
+        ("grok", "Grok"),
+    ):
+        agent = AgentInfo(
+            id=f"cli:{cmd}",
+            kind="cli",
+            label=label,
+            available=True,
+            runnable=False,
+            aliases=[cmd],
+            chair_capable=True,
+        )
+        seen: list[list[str]] = []
+
+        def fake(argv: list[str], timeout: float, _seen=seen) -> tuple[int, str, str]:
+            _seen.append(argv)
+            if argv[:2] == ["codex", "exec"] or (
+                len(argv) >= 3 and argv[:3] == ["codex", "exec", "resume"]
+            ):
+                if "-o" in argv:
+                    from pathlib import Path
+
+                    Path(argv[argv.index("-o") + 1]).write_text("OK", encoding="utf-8")
+                return 0, "", ""
+            return 0, "OK", ""
+
+        state = ChatState()
+        ok, detail = warmup_chair(agent, state, cli_runner=fake)
+        assert ok, (cmd, detail)
+        reply_as_chair(agent, "下一句", state, cli_runner=fake)
+        assert len(seen) == 2, cmd
+        if cmd == "claude":
+            assert "--resume" in seen[1]
+        elif cmd == "codex":
+            assert seen[1][:3] == ["codex", "exec", "resume"]
+        elif cmd == "gemini":
+            assert "--resume" in seen[1]
+        elif cmd == "grok":
+            assert "-c" in seen[1]
 
 
 def test_reply_as_chair_second_turn_resumes():

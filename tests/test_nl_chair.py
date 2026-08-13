@@ -303,6 +303,10 @@ def _stub_discover() -> DiscoveryResult:
 def _run_chat(monkeypatch, tmp_path: Path, lines: list[str], extra_args: list[str] | None = None) -> str:
     monkeypatch.setattr("mk_xinone.cli.discover_agents", _stub_discover)
     monkeypatch.setattr("mk_xinone.cli.sessions_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "mk_xinone.cli.warmup_chair",
+        lambda *args, **kwargs: (True, "skip"),
+    )
     stream = iter([*lines, "/quit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(stream))
     try:
@@ -389,6 +393,10 @@ def test_cli_appoint_capable_codex(monkeypatch, capsys, tmp_path: Path) -> None:
 
     monkeypatch.setattr("mk_xinone.cli.discover_agents", stub)
     monkeypatch.setattr("mk_xinone.cli.sessions_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "mk_xinone.cli.warmup_chair",
+        lambda *args, **kwargs: (True, "skip"),
+    )
     stream = iter(["讓 Codex 當主席。", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(stream))
     try:

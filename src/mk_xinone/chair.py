@@ -130,6 +130,7 @@ class ChatState:
     cli_work_dir: str | None = None
     cli_session_cmd: str | None = None
     cli_session_id: str | None = None
+    chair_warmed_id: str | None = None
 
 
 def _strip_control_phrases(text: str) -> str:
@@ -375,6 +376,68 @@ def apply_chair_change(
 def _reset_cli_session(state: ChatState) -> None:
     state.cli_session_cmd = None
     state.cli_session_id = None
+    state.chair_warmed_id = None
+
+
+_WARMUP_PROMPT = "你是 mk-xinone 的主席。之後只回白話，不要開會、不要呼叫工具。現在只回：OK"
+
+
+def warmup_chair(
+    agent: AgentInfo | None,
+    state: ChatState,
+    *,
+    cli_runner=None,
+) -> tuple[bool, str]:
+    """Open a persistent chair session as soon as the agent is named."""
+    if agent is None or agent.kind == "mock" or not agent.chair_capable:
+        return True, "skip"
+    if state.chair_warmed_id == agent.id:
+        return True, "hot"
+
+    if agent.kind == "cli":
+        cmd = cli_cmd_from_agent_id(agent.id)
+        if state.cli_session_cmd == cmd and state.cli_session_id:
+            state.chair_warmed_id = agent.id
+            return True, "hot"
+        work_dir, cont, session_id, bound_cmd = bind_cli_workspace(
+            state.cli_work_dir,
+            cmd,
+            state.cli_session_cmd,
+            state.cli_session_id,
+        )
+        timeout = float(os.environ.get("XINONE_CHAIR_TIMEOUT", "90"))
+        try:
+            run_cli_chair(
+                bound_cmd,
+                _WARMUP_PROMPT,
+                timeout=timeout,
+                runner=cli_runner,
+                cwd=os.path.join(work_dir, bound_cmd),
+                continue_session=cont,
+                session_id=session_id,
+            )
+        except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
+            return False, str(exc)
+        _remember_cli_session(state, bound_cmd, session_id, work_dir)
+        state.chair_warmed_id = agent.id
+        return True, "warmed"
+
+    if agent.kind in {"ollama", "openai"}:
+        try:
+            decide_chair(
+                "只回 OK",
+                state,
+                backend="openai",
+                base_url=agent.base_url,
+                model=agent.model,
+                api_key="ollama" if agent.kind == "ollama" else None,
+            )
+        except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
+            return False, str(exc)
+        state.chair_warmed_id = agent.id
+        return True, "warmed"
+
+    return True, "skip"
 
 
 def _remember_cli_session(state: ChatState, cmd: str, session_id: str, work_dir: str) -> None:

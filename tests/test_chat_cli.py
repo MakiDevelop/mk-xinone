@@ -21,6 +21,7 @@ def _stub_discover():
 def test_chat_greeting_no_council(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr("mk_xinone.cli.discover_agents", _stub_discover)
     monkeypatch.setattr("mk_xinone.cli.sessions_dir", lambda: tmp_path)
+    monkeypatch.setattr("mk_xinone.cli.warmup_chair", lambda *a, **k: (True, "skip"))
     inputs = iter(["哈囉～", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs))
     try:
@@ -37,6 +38,7 @@ def test_chat_greeting_no_council(monkeypatch, capsys, tmp_path):
 def test_chat_force_council(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr("mk_xinone.cli.discover_agents", _stub_discover)
     monkeypatch.setattr("mk_xinone.cli.sessions_dir", lambda: tmp_path)
+    monkeypatch.setattr("mk_xinone.cli.warmup_chair", lambda *a, **k: (True, "skip"))
     # Force fixed preset path (only mock → no real all-hands)
     inputs = iter(["/council 評估本地 session 當 SSOT 是否合理", "", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs))

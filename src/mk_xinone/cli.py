@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -29,6 +30,7 @@ from mk_xinone.chair import (
     parse_confirm_reply,
     parse_intent,
     reply_as_chair,
+    warmup_chair,
 )
 from mk_xinone.orchestrator import run_council
 from mk_xinone.paths import presets_dir, repo_root, sessions_dir
@@ -211,6 +213,23 @@ def _agent_for_chair(assignment, agents):
     return next((a for a in agents if a.id == assignment.agent_id), None)
 
 
+def _warmup_named_chair(agent, state, *, announce: bool) -> None:
+    if agent is None or agent.kind == "mock" or not agent.chair_capable:
+        return
+    if state.chair_warmed_id == agent.id:
+        return
+    label = chair_label_for(agent)
+    if announce:
+        print(f"正在就緒 {label}…", flush=True)
+    ok, detail = warmup_chair(agent, state)
+    if not announce:
+        return
+    if ok:
+        print(f"{label} 已就緒，下一句不會冷啟動。", flush=True)
+    else:
+        print(f"{label} 就緒失敗：{detail}", flush=True)
+
+
 def _chair_prompt(state: ChatState) -> str:
     if state.pending_confirm is not None:
         return "確認> "
@@ -366,6 +385,29 @@ def cmd_chat(args: argparse.Namespace) -> int:
     backend = args.backend
     verbose = args.verbose
     last_code = 0
+    warm_lock = threading.Lock()
+
+    def _bg_warmup(agent) -> threading.Thread:
+        def _run() -> None:
+            with warm_lock:
+                current = state.active_chair
+                if current is None or agent is None or current.agent_id != agent.id:
+                    return
+                warmup_chair(agent, state)
+
+        thread = threading.Thread(target=_run, daemon=True, name="xinone-chair-warm")
+        thread.start()
+        return thread
+
+    def _sync_warmup(agent, *, announce: bool) -> None:
+        with warm_lock:
+            _warmup_named_chair(agent, state, announce=announce)
+
+    def _wait_warmup() -> None:
+        if start_warm.is_alive():
+            start_warm.join(timeout=float(os.environ.get("XINONE_CHAIR_TIMEOUT", "90")))
+
+    start_warm = _bg_warmup(picked.agent)
 
     def _remember(user_text: str, reply: str) -> None:
         state.history.append(ChatTurn(role="user", content=user_text))
@@ -399,8 +441,14 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 continue
             if action == "appoint":
                 plan = parse_intent(line)
-                ok, msg = apply_chair_change(state, plan, discover_agents().agents)
+                agents_now = discover_agents().agents
+                ok, msg = apply_chair_change(state, plan, agents_now)
                 print(msg)
+                if ok:
+                    _sync_warmup(
+                        _agent_for_chair(state.active_chair, agents_now),
+                        announce=True,
+                    )
                 if ok and state.active_chair is not None and state.pending_confirm:
                     state.pending_confirm.chair = state.active_chair
                     _show_confirm_card(state.pending_confirm)
@@ -471,6 +519,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
         if plan.chair_change != "keep":
             ok, msg = apply_chair_change(state, plan, agents)
             print(msg)
+            if ok:
+                _sync_warmup(_agent_for_chair(state.active_chair, agents), announce=True)
             if not ok and plan.primary == "convene":
                 last_code = 0
                 continue
@@ -521,7 +571,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
         live_agents = discover_agents().agents
         chair_agent = _agent_for_chair(state.active_chair, live_agents)
-        decision = reply_as_chair(chair_agent, user_text, state)
+        _wait_warmup()
+        with warm_lock:
+            decision = reply_as_chair(chair_agent, user_text, state)
         _print_chair(state, decision.message)
         if verbose and decision.reason:
             print(f"      (reason: {decision.reason})")
